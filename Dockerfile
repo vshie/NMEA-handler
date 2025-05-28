@@ -32,11 +32,12 @@ ENV FLASK_APP=app.py
 # Expose port
 EXPOSE 6436
 
-# Set labels for BlueOS
-LABEL org.opencontainers.image.title="NMEA Handler"
-LABEL org.opencontainers.image.description="A BlueOS extension for handling NMEA messages from serial devices"
-LABEL org.opencontainers.image.vendor="Blue Robotics"
+# BlueOS extension metadata
+LABEL version="0.1"
+LABEL type="tool"
+LABEL requirements="core >= 1.1"
 
+ARG IMAGE_NAME
 LABEL permissions='\
 {\
   "ExposedPorts": {\
@@ -67,18 +68,31 @@ LABEL permissions='\
   }\
 }'
 
-LABEL type="extension"
-LABEL requirements="{}"
-LABEL name="nmea_handler"
-LABEL description="NMEA Message Handler"
-LABEL author="Blue Robotics"
-LABEL website="https://github.com/vshie/NMEA-handler"
-LABEL icon="mdi-serial-port"
-LABEL display_name="NMEA Handler"
-LABEL display_icon="mdi-serial-port"
-LABEL display_description="Monitor and log NMEA messages from serial devices"
-LABEL display_category="Sensors"
-LABEL display_order="10"
+ARG AUTHOR
+ARG AUTHOR_EMAIL
+LABEL authors='[\
+    {\
+        "name": "Tony White",\
+        "email": "tony@bluerobotics.com"\
+    }\
+]'
+
+ARG MAINTAINER
+ARG MAINTAINER_EMAIL
+LABEL company='\
+{\
+    "about": "NMEA Handler for BlueOS",\
+    "name": "Blue Robotics",\
+    "email": "support@bluerobotics.com"\
+}'
+
+ARG REPO
+ARG OWNER
+LABEL readme=''
+LABEL links='\
+{\
+    "source": "https://github.com/vshie/NMEA-handler"\
+}'
 
 # Run the application
 CMD ["python", "main.py"]

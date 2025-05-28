@@ -5,10 +5,10 @@ import serial.tools.list_ports
 import logging
 import json
 from pathlib import Path
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static')
 CORS(app)
 
 class NMEAHander:
@@ -96,6 +96,11 @@ class NMEAHander:
 # Create NMEA handler instance
 nmea_handler = NMEAHander()
 
+@app.route('/')
+def index():
+    """Serve the main page"""
+    return send_from_directory(app.static_folder, 'index.html')
+
 @app.route('/api/serial/ports', methods=['GET'])
 def get_ports():
     """Get list of available serial ports"""
@@ -150,6 +155,26 @@ def delete_logs():
         return jsonify({"success": True, "message": "Logs deleted successfully"})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
+
+@app.route('/register_service')
+def register_service():
+    """Provide extension metadata to BlueOS"""
+    return jsonify({
+        "name": "NMEA Handler",
+        "version": "0.1",
+        "description": "Monitor and log NMEA messages from serial devices",
+        "icon": "mdi-enterprise",
+        "author": "Tony White",
+        "website": "https://github.com/vshie/NMEA-handler",
+        "api": "0.1",
+        "frontend": {
+            "name": "NMEA Handler",
+            "icon": "mdi-enterprise",
+            "description": "Monitor and log NMEA messages from serial devices",
+            "category": "Sensors",
+            "order": 10
+        }
+    })
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=6436)
