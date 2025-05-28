@@ -65,7 +65,6 @@
                     v-model="selectedPort"
                     :items="availablePorts"
                     label="Serial Port"
-                    @change="connectToPort"
                     outlined
                     dense
                   ></v-select>
@@ -75,7 +74,6 @@
                     v-model="selectedBaudRate"
                     :items="baudRates"
                     label="Baud Rate"
-                    @change="updateBaudRate"
                     outlined
                     dense
                   ></v-select>
@@ -92,10 +90,18 @@
                     Connected to {{ serialPortInfo.serial_port }} at {{ serialPortInfo.baud_rate }} baud
                   </v-alert>
                   <v-btn
+                    v-if="serialPortInfo.serial_port === 'Not connected'"
+                    color="primary"
+                    @click="connectToPort"
+                    :disabled="!selectedPort || !selectedBaudRate"
+                    class="mr-2"
+                  >
+                    Connect
+                  </v-btn>
+                  <v-btn
+                    v-else
                     color="error"
                     @click="disconnectPort"
-                    :disabled="serialPortInfo.serial_port === 'Not connected'"
-                    class="mt-2"
                   >
                     Disconnect
                   </v-btn>
@@ -193,7 +199,7 @@
           }
         },
         async connectToPort() {
-          if (!this.selectedPort) return;
+          if (!this.selectedPort || !this.selectedBaudRate) return;
           try {
             const response = await axios.post('/api/serial/select', {
               port: this.selectedPort,
@@ -207,9 +213,7 @@
           }
         },
         async updateBaudRate() {
-          if (this.serialPortInfo.serial_port !== 'Not connected') {
-            await this.connectToPort();
-          }
+          console.log('Baud rate updated to:', this.selectedBaudRate);
         },
         async disconnectPort() {
           try {

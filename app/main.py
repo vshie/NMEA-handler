@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
+import datetime
 
 app = Flask(__name__, static_folder='static')
 CORS(app)
@@ -23,7 +24,7 @@ class NMEAHander:
         log_dir.mkdir(parents=True, exist_ok=True)
         
         # Set up file handler for NMEA messages
-        fh = logging.FileHandler(self.log_path)
+        fh = logging.FileHandler(self.log_path, mode='a')  # Use append mode
         fh.setLevel(logging.INFO)
         formatter = logging.Formatter('%(asctime)s - %(message)s')
         fh.setFormatter(formatter)
@@ -31,7 +32,7 @@ class NMEAHander:
         
         # Set up file handler for application logs
         app_log_path = log_dir / 'nmea_handler.log'
-        app_fh = logging.FileHandler(app_log_path)
+        app_fh = logging.FileHandler(app_log_path, mode='a')  # Use append mode
         app_fh.setLevel(logging.INFO)
         app_fh.setFormatter(formatter)
         self.logger.addHandler(app_fh)
@@ -90,7 +91,15 @@ class NMEAHander:
     def log_message(self, message):
         """Log NMEA message"""
         try:
-            self.logger.info(message)
+            # Ensure the log file exists
+            if not self.log_path.exists():
+                self.log_path.touch()
+            
+            # Write the message with timestamp
+            timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            with open(self.log_path, 'a') as f:
+                f.write(f"{timestamp} - {message}\n")
+            
             return True, "Message logged"
         except Exception as e:
             return False, str(e)
