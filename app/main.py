@@ -225,6 +225,11 @@ def log_message():
 @app.route('/api/logs', methods=['GET'])
 def download_logs():
     """Download log file"""
+    if not nmea_handler.log_path.exists():
+        return jsonify({
+            "success": False,
+            "message": "No log file found. Connect to a device and receive messages to create logs."
+        }), 404
     return send_file(nmea_handler.log_path, as_attachment=True)
 
 @app.route('/api/logs/delete', methods=['POST'])
