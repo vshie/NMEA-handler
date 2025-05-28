@@ -128,7 +128,11 @@ def register_service():
                 "description": "Monitor and log NMEA messages from serial devices",
                 "category": "Sensors",
                 "order": 10,
-                "url": "/"
+                "url": "/",
+                "type": "tool",
+                "version": "0.1",
+                "api": "0.1",
+                "requirements": "core >= 1.1"
             }
         ]
     })

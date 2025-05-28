@@ -34,9 +34,14 @@ ENV FLASK_APP=app.py
 EXPOSE 6436
 
 # BlueOS extension metadata
-LABEL version="0.1"
-LABEL type="tool"
-LABEL requirements="core >= 1.1"
+LABEL org.blueos.type="tool"
+LABEL org.blueos.version="0.1"
+LABEL org.blueos.requirements="core >= 1.1"
+LABEL org.blueos.name="NMEA Handler"
+LABEL org.blueos.description="Monitor and log NMEA messages from serial devices"
+LABEL org.blueos.icon="mdi-enterprise"
+LABEL org.blueos.category="Sensors"
+LABEL org.blueos.order="10"
 
 ARG IMAGE_NAME
 LABEL permissions='\
@@ -71,7 +76,7 @@ LABEL permissions='\
 
 ARG AUTHOR
 ARG AUTHOR_EMAIL
-LABEL authors='[\
+LABEL org.blueos.authors='[\
     {\
         "name": "Tony White",\
         "email": "tony@bluerobotics.com"\
@@ -80,7 +85,7 @@ LABEL authors='[\
 
 ARG MAINTAINER
 ARG MAINTAINER_EMAIL
-LABEL company='\
+LABEL org.blueos.company='\
 {\
     "about": "NMEA Handler for BlueOS",\
     "name": "Blue Robotics",\
@@ -89,8 +94,8 @@ LABEL company='\
 
 ARG REPO
 ARG OWNER
-LABEL readme=''
-LABEL links='\
+LABEL org.blueos.readme=''
+LABEL org.blueos.links='\
 {\
     "source": "https://github.com/vshie/NMEA-handler"\
 }'
