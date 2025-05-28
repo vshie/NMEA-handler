@@ -1,18 +1,16 @@
-FROM python:3.11-slim
+FROM python:3.11-slim-bullseye
 
-# Set working directory
-WORKDIR /app
-
-# Install system dependencies
+# Install minimal system dependencies
 RUN apt-get update && apt-get install -y \
+    python3-serial \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first to leverage Docker cache
-COPY app/pyproject.toml .
-RUN pip install --no-cache-dir .
+# Copy application files
+WORKDIR /app
+COPY app /app
 
-# Copy application code
-COPY app/ .
+# Install dependencies
+RUN pip install litestar pyserial
 
 # Create logs directory inside the container
 RUN mkdir -p /app/logs && chmod 777 /app/logs
@@ -57,6 +55,19 @@ LABEL permissions='\
     "Privileged": true\
   }\
 }'
+
+LABEL type="extension"
+LABEL requirements="{}"
+LABEL name="nmea_handler"
+LABEL description="NMEA Message Handler"
+LABEL author="Blue Robotics"
+LABEL website="https://github.com/vshie/NMEA-handler"
+LABEL icon="mdi-serial-port"
+LABEL display_name="NMEA Handler"
+LABEL display_icon="mdi-serial-port"
+LABEL display_description="Monitor and log NMEA messages from serial devices"
+LABEL display_category="Sensors"
+LABEL display_order="10"
 
 # Run the application
 CMD ["python", "main.py"]
