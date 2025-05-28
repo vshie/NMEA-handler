@@ -26,7 +26,17 @@ This extension can be installed through the BlueOS Extensions Manager:
 3. Click "Connect" to establish the serial connection
 4. View incoming NMEA messages in the text window
 5. Use checkboxes to enable/disable logging for specific message types
-6. Logs are stored in `/app/logs/nmea_messages.log`
+
+## Log Files
+
+Log files are stored in the BlueOS extensions directory and can be accessed through the BlueOS file browser:
+
+- Location: `/usr/blueos/extensions/nmea-handler/`
+- Files:
+  - `nmea_messages.log`: Contains the NMEA messages that have been selected for logging
+  - `nmea_handler.log`: Contains the application's operational logs
+
+These logs persist across container restarts and can be accessed directly from the BlueOS file system.
 
 ## Development
 
