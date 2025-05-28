@@ -22,7 +22,8 @@ RUN pip install --no-cache-dir flask==2.0.1 && \
     pip install --no-cache-dir Werkzeug==2.0.3 && \
     pip install --no-cache-dir Jinja2==3.0.3 && \
     pip install --no-cache-dir MarkupSafe==2.0.1 && \
-    pip install --no-cache-dir itsdangerous==2.0.1
+    pip install --no-cache-dir itsdangerous==2.0.1 && \
+    pip install --no-cache-dir flask-cors==3.0.10
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
