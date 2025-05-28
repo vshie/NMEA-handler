@@ -5,15 +5,28 @@ RUN apt-get update && apt-get install -y \
     python3-serial \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy application files
+# Create app directory
 WORKDIR /app
-COPY app /app
-
-# Install dependencies
-RUN pip install litestar pyserial
 
 # Create logs directory inside the container
 RUN mkdir -p /app/logs && chmod 777 /app/logs
+
+# Copy app files
+COPY app/ .
+
+# Install Python dependencies directly (without upgrading pip)
+# Install each package separately to avoid hash verification issues
+RUN pip install --no-cache-dir litestar==0.27.0 && \
+    pip install --no-cache-dir pyserial==3.5 && \
+    pip install --no-cache-dir msgspec==0.18.6 && \
+    pip install --no-cache-dir typing-extensions==4.9.0 && \
+    pip install --no-cache-dir anyio==4.3.0 && \
+    pip install --no-cache-dir click==8.1.7 && \
+    pip install --no-cache-dir h11==0.14.0 && \
+    pip install --no-cache-dir httptools==0.6.1 && \
+    pip install --no-cache-dir python-dotenv==1.0.1 && \
+    pip install --no-cache-dir pyyaml==6.0.2 && \
+    pip install --no-cache-dir uvicorn==0.27.1
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
