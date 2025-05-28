@@ -237,6 +237,7 @@
               this.messages.unshift(response.data);
               if (response.data.available_types) {
                 this.availableMessageTypes = response.data.available_types;
+                this.selectedMessageTypes = [...response.data.available_types];
               }
               if (this.messages.length > 100) {
                 this.messages.pop();

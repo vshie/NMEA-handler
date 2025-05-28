@@ -75,6 +75,8 @@ class NMEAHander:
                 # Parse NMEA message
                 msg_type = data.split(',')[0][1:]  # Remove $ and get message type
                 self.nmea_messages.add(msg_type)
+                # Log the message
+                self.log_message(data)
                 return {
                     "status": "success",
                     "raw": data,
