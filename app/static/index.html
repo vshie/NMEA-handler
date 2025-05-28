@@ -2,415 +2,302 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, minimal-ui">
   <title>NMEA Handler</title>
   <link href="https://fonts.googleapis.com/css?family=Roboto:100,300,400,500,700,900" rel="stylesheet">
-  <link href="https://cdn.jsdelivr.net/npm/@mdi/font@6.x/css/materialdesignicons.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@mdi/font@latest/css/materialdesignicons.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/vuetify@2.x/dist/vuetify.min.css" rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vue@2.x/dist/vue.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/vuetify@2.x/dist/vuetify.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
   <style>
-    [v-cloak] { display: none; }
-    .logo-container {
-      display: flex;
-      align-items: center;
-      gap: 15px;
+    .v-application {
+      background: #1e1e1e !important;
     }
-    .logo-img {
-      height: 50px;
-      width: auto;
+    .v-card {
+      background-color: #2d2d2d !important;
     }
-    .header-title {
-      font-size: 1.5rem;
-      font-weight: 500;
-      margin: 0;
+    .v-list {
+      background-color: #2d2d2d !important;
     }
-    .theme--dark.v-sheet {
-      background-color: #1E1E1E;
+    .v-list-item {
+      color: #ffffff !important;
     }
-    .theme--dark.v-card {
-      background-color: #2D2D2D;
+    .v-list-item__title {
+      color: #ffffff !important;
+    }
+    .v-list-item__subtitle {
+      color: #b0b0b0 !important;
+    }
+    .v-tabs {
+      background-color: #2d2d2d !important;
+    }
+    .v-tab {
+      color: #ffffff !important;
+    }
+    .v-tab--active {
+      color: #1976d2 !important;
+    }
+    .v-tabs-slider {
+      background-color: #1976d2 !important;
     }
     .message-list {
       max-height: 400px;
       overflow-y: auto;
     }
     .message-item {
-      font-family: monospace;
-      white-space: pre-wrap;
-      word-break: break-all;
+      border-bottom: 1px solid #3d3d3d;
+      padding: 8px;
     }
-    .card-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
+    .message-item:last-child {
+      border-bottom: none;
     }
-    .info-chip {
-      margin: 0 4px;
+    .settings-card {
+      margin-top: 16px;
     }
   </style>
 </head>
 <body>
-  <div id="app" v-cloak>
+  <div id="app">
     <v-app dark>
-      <v-app-bar app dark dense>
-        <div class="logo-container">
-          <v-icon large>mdi-serial-port</v-icon>
-          <h1 class="header-title">NMEA Handler</h1>
-        </div>
-        <v-spacer></v-spacer>
-        <v-chip class="info-chip" small>
-          <v-icon small left>mdi-serial-port</v-icon>
-          {{ serialPortInfo }}
-        </v-chip>
+      <v-app-bar app color="primary" dark>
+        <v-toolbar-title>NMEA Handler</v-toolbar-title>
       </v-app-bar>
 
       <v-main>
-        <v-container fluid>
-          <v-tabs v-model="activeTab" background-color="transparent" color="primary">
-            <v-tab>
-              <v-icon small left>mdi-message-text</v-icon>
-              Messages
-            </v-tab>
-            <v-tab>
-              <v-icon small left>mdi-cog</v-icon>
-              Settings
-            </v-tab>
-          </v-tabs>
-
-          <v-tabs-items v-model="activeTab">
-            <!-- Messages Tab -->
-            <v-tab-item>
-              <v-card flat>
+        <v-container>
+          <v-row>
+            <v-col cols="12" md="8">
+              <v-card>
+                <v-card-title>NMEA Messages</v-card-title>
                 <v-card-text>
+                  <div class="message-list">
+                    <div v-for="(message, index) in messages" :key="index" class="message-item">
+                      <v-row align="center">
+                        <v-col cols="12" sm="8">
+                          <div class="text-subtitle-1">{{ message.raw }}</div>
+                          <div class="text-caption">Type: {{ message.type }}</div>
+                        </v-col>
+                        <v-col cols="12" sm="4" class="text-right">
+                          <v-btn small color="primary" @click="logMessage(message.raw)">
+                            Log
+                          </v-btn>
+                        </v-col>
+                      </v-row>
+                    </div>
+                    <div v-if="messages.length === 0" class="text-center pa-4">
+                      No messages received yet. Connect to a serial port to start receiving messages.
+                    </div>
+                  </div>
+                </v-card-text>
+              </v-card>
+
+              <v-card class="settings-card">
+                <v-card-title>Settings</v-card-title>
+                <v-card-text>
+                  <v-row>
+                    <v-col cols="12" sm="6">
+                      <v-select
+                        v-model="selectedPort"
+                        :items="availablePorts"
+                        label="Serial Port"
+                        @change="connectToPort"
+                      ></v-select>
+                    </v-col>
+                    <v-col cols="12" sm="6">
+                      <v-select
+                        v-model="selectedBaudRate"
+                        :items="baudRates"
+                        label="Baud Rate"
+                        @change="updateBaudRate"
+                      ></v-select>
+                    </v-col>
+                  </v-row>
+                  <v-row v-if="serialPortInfo.serial_port !== 'Not connected'">
+                    <v-col cols="12">
+                      <v-alert type="success" dense>
+                        Connected to {{ serialPortInfo.serial_port }} at {{ serialPortInfo.baud_rate }} baud
+                      </v-alert>
+                    </v-col>
+                  </v-row>
                   <v-row>
                     <v-col cols="12">
-                      <v-card elevation="2">
-                        <v-card-title class="card-header">
-                          <span>NMEA Messages</span>
-                          <v-btn
-                            color="primary"
-                            small
-                            @click="clearMessages"
-                            :disabled="!messages.length"
-                          >
-                            <v-icon small left>mdi-delete</v-icon>
-                            Clear Messages
-                          </v-btn>
-                        </v-card-title>
-                        <v-card-text>
-                          <div class="message-list">
-                            <v-list dense>
-                              <v-list-item
-                                v-for="(message, index) in messages"
-                                :key="index"
-                                class="message-item"
-                              >
-                                <v-list-item-content>
-                                  <v-list-item-title>{{ message.raw }}</v-list-item-title>
-                                  <v-list-item-subtitle v-if="message.type">
-                                    Type: {{ message.type }}
-                                  </v-list-item-subtitle>
-                                </v-list-item-content>
-                              </v-list-item>
-                            </v-list>
-                          </div>
-                        </v-card-text>
-                      </v-card>
+                      <v-btn color="error" @click="disconnectPort" :disabled="serialPortInfo.serial_port === 'Not connected'">
+                        Disconnect
+                      </v-btn>
                     </v-col>
                   </v-row>
                 </v-card-text>
               </v-card>
-            </v-tab-item>
+            </v-col>
 
-            <!-- Settings Tab -->
-            <v-tab-item>
-              <v-card flat>
+            <v-col cols="12" md="4">
+              <v-card>
+                <v-card-title>Message Types</v-card-title>
                 <v-card-text>
-                  <v-row>
-                    <v-col cols="12" md="6">
-                      <v-card elevation="2">
-                        <v-card-title>Data Management</v-card-title>
-                        <v-card-text>
-                          <v-row>
-                            <v-col cols="12">
-                              <v-btn 
-                                color="primary" 
-                                block 
-                                @click="downloadLogs"
-                                class="mb-4"
-                              >
-                                <v-icon left>mdi-download</v-icon>
-                                Download Logs
-                              </v-btn>
-                              
-                              <v-btn 
-                                color="error" 
-                                block 
-                                @click="showDeleteDialog = true"
-                              >
-                                <v-icon left>mdi-delete</v-icon>
-                                Delete Logs
-                              </v-btn>
-                            </v-col>
-                          </v-row>
-                        </v-card-text>
-                      </v-card>
-                    </v-col>
-                    
-                    <v-col cols="12" md="6">
-                      <v-card elevation="2">
-                        <v-card-title>Serial Port Settings</v-card-title>
-                        <v-card-text>
-                          <v-row>
-                            <v-col cols="12">
-                              <v-select
-                                v-model="selectedPort"
-                                :items="availablePorts"
-                                label="Serial Port"
-                                :loading="portsLoading"
-                                :disabled="portsLoading"
-                                outlined
-                                @change="onPortChange"
-                              >
-                                <template v-slot:append-outer>
-                                  <v-btn 
-                                    icon 
-                                    small
-                                    class="ml-1"
-                                    @click="refreshPorts"
-                                    :disabled="portsLoading"
-                                  >
-                                    <v-icon small>mdi-refresh</v-icon>
-                                  </v-btn>
-                                </template>
-                              </v-select>
-                              <div class="mt-2 caption">
-                                <v-icon small color="info">mdi-information</v-icon>
-                                Changing ports will reconnect the sensor data stream
-                              </div>
-                            </v-col>
-                          </v-row>
-                        </v-card-text>
-                      </v-card>
-                    </v-col>
-                    
-                    <v-col cols="12" md="6">
-                      <v-card elevation="2">
-                        <v-card-title>About</v-card-title>
-                        <v-card-text>
-                          <p>NMEA Handler is a tool for monitoring and logging NMEA messages from serial devices.</p>
-                          <p class="mb-0"><strong>Version:</strong> 1.0.0</p>
-                        </v-card-text>
-                      </v-card>
-                    </v-col>
-                  </v-row>
+                  <v-list>
+                    <v-list-item v-for="(type, index) in availableMessageTypes" :key="index">
+                      <v-list-item-content>
+                        <v-list-item-title>{{ type }}</v-list-item-title>
+                      </v-list-item-content>
+                      <v-list-item-action>
+                        <v-checkbox
+                          v-model="selectedMessageTypes"
+                          :value="type"
+                          @change="updateMessageTypes"
+                        ></v-checkbox>
+                      </v-list-item-action>
+                    </v-list-item>
+                    <v-list-item v-if="availableMessageTypes.length === 0">
+                      <v-list-item-content>
+                        <v-list-item-title>No message types detected yet</v-list-item-title>
+                        <v-list-item-subtitle>Connect to a device to see available message types</v-list-item-subtitle>
+                      </v-list-item-content>
+                    </v-list-item>
+                  </v-list>
                 </v-card-text>
               </v-card>
-            </v-tab-item>
-          </v-tabs-items>
+
+              <v-card class="mt-4">
+                <v-card-title>Logs</v-card-title>
+                <v-card-text>
+                  <v-btn color="primary" @click="downloadLogs" class="mr-2">
+                    Download Logs
+                  </v-btn>
+                  <v-btn color="error" @click="deleteLogs">
+                    Delete Logs
+                  </v-btn>
+                </v-card-text>
+              </v-card>
+            </v-col>
+          </v-row>
         </v-container>
       </v-main>
-
-      <!-- Delete Confirmation Dialog -->
-      <v-dialog v-model="showDeleteDialog" max-width="400">
-        <v-card>
-          <v-card-title class="headline">Warning</v-card-title>
-          <v-card-text>Are you sure you want to delete all logs? This action cannot be undone.</v-card-text>
-          <v-card-actions>
-            <v-spacer></v-spacer>
-            <v-btn color="primary" text @click="showDeleteDialog = false">Cancel</v-btn>
-            <v-btn color="error" text @click="deleteLogsConfirmed">Delete</v-btn>
-          </v-card-actions>
-        </v-card>
-      </v-dialog>
-
-      <!-- Snackbar for notifications -->
-      <v-snackbar v-model="snackbar.show" :color="snackbar.color" :timeout="3000">
-        {{ snackbar.text }}
-        <template v-slot:action="{ attrs }">
-          <v-btn text v-bind="attrs" @click="snackbar.show = false">Close</v-btn>
-        </template>
-      </v-snackbar>
     </v-app>
   </div>
-  
+
   <script>
     new Vue({
       el: '#app',
-      vuetify: new Vuetify({
-        theme: {
-          dark: true,
-          themes: {
-            dark: {
-              primary: '#1976D2',
-              secondary: '#424242',
-              accent: '#82B1FF',
-              error: '#FF5252',
-              info: '#2196F3',
-              success: '#4CAF50',
-              warning: '#FFC107'
-            }
-          }
-        }
-      }),
+      vuetify: new Vuetify(),
       data: {
-        activeTab: 0,
-        serialPortInfo: '',
         messages: [],
-        refreshTimer: null,
-        showDeleteDialog: false,
-        snackbar: {
-          show: false,
-          color: 'success',
-          text: ''
-        },
-        // Serial port selection
-        selectedPort: '',
         availablePorts: [],
-        portsLoading: false
+        selectedPort: null,
+        serialPortInfo: { serial_port: 'Not connected', baud_rate: 0 },
+        baudRates: [4800, 9600, 19200, 38400, 57600, 115200],
+        selectedBaudRate: 9600,
+        availableMessageTypes: [],
+        selectedMessageTypes: [],
+        pollingInterval: null
       },
       methods: {
-        fetchSerialInfo() {
-          axios.get('/api/serial').then(response => {
-            const info = response.data;
-            this.serialPortInfo = `${info.serial_port} @ ${info.baud_rate} baud`;
-            // Set the selectedPort to match the current port
-            this.selectedPort = info.serial_port;
-          }).catch(error => {
-            console.error("Error fetching serial info:", error);
-          });
+        async fetchPorts() {
+          try {
+            const response = await axios.get('/api/serial/ports');
+            this.availablePorts = response.data.ports;
+          } catch (error) {
+            console.error('Error fetching ports:', error);
+          }
         },
-        fetchData() {
-          axios.get('/api/read').then(response => {
-            const data = response.data;
-            if (data.status === 'success') {
-              this.messages.unshift(data);
-              // Keep only the last 100 messages
+        async connectToPort() {
+          if (!this.selectedPort) return;
+          try {
+            const response = await axios.post('/api/serial/select', {
+              port: this.selectedPort,
+              baud_rate: this.selectedBaudRate
+            });
+            if (response.data.success) {
+              this.startPolling();
+            }
+          } catch (error) {
+            console.error('Error connecting to port:', error);
+          }
+        },
+        async updateBaudRate() {
+          if (this.serialPortInfo.serial_port !== 'Not connected') {
+            await this.connectToPort();
+          }
+        },
+        async disconnectPort() {
+          try {
+            await axios.post('/api/serial/disconnect');
+            this.stopPolling();
+            this.messages = [];
+            this.availableMessageTypes = [];
+            this.selectedMessageTypes = [];
+          } catch (error) {
+            console.error('Error disconnecting:', error);
+          }
+        },
+        async fetchSerialInfo() {
+          try {
+            const response = await axios.get('/api/serial');
+            this.serialPortInfo = response.data;
+          } catch (error) {
+            console.error('Error fetching serial info:', error);
+          }
+        },
+        async readSerial() {
+          try {
+            const response = await axios.get('/api/read');
+            if (response.data.status === 'success') {
+              this.messages.unshift(response.data);
+              if (response.data.available_types) {
+                this.availableMessageTypes = response.data.available_types;
+              }
               if (this.messages.length > 100) {
                 this.messages.pop();
               }
             }
-          }).catch(error => {
-            console.error("Error fetching data:", error);
-          });
-        },
-        startRefreshTimer() {
-          if (this.refreshTimer) {
-            clearInterval(this.refreshTimer);
+          } catch (error) {
+            console.error('Error reading serial:', error);
           }
-          
-          this.refreshTimer = setInterval(() => {
-            if (!document.hidden) {
-              this.fetchData();
-            }
+        },
+        async logMessage(message) {
+          try {
+            await axios.post('/api/log_message', { message });
+          } catch (error) {
+            console.error('Error logging message:', error);
+          }
+        },
+        async downloadLogs() {
+          try {
+            window.location.href = '/api/logs';
+          } catch (error) {
+            console.error('Error downloading logs:', error);
+          }
+        },
+        async deleteLogs() {
+          try {
+            await axios.post('/api/logs/delete');
+          } catch (error) {
+            console.error('Error deleting logs:', error);
+          }
+        },
+        startPolling() {
+          this.pollingInterval = setInterval(() => {
+            this.readSerial();
+            this.fetchSerialInfo();
           }, 1000);
         },
-        clearMessages() {
-          this.messages = [];
-          this.snackbar = {
-            show: true,
-            color: 'info',
-            text: 'Messages cleared'
-          };
+        stopPolling() {
+          if (this.pollingInterval) {
+            clearInterval(this.pollingInterval);
+            this.pollingInterval = null;
+          }
         },
-        downloadLogs() {
-          window.location.href = '/api/logs';
-        },
-        deleteLogsConfirmed() {
-          this.deleteLogs();
-          this.showDeleteDialog = false;
-        },
-        deleteLogs() {
-          axios.post('/api/logs/delete')
-            .then(response => {
-              if (response.data.success) {
-                this.snackbar = { show: true, color: 'success', text: 'Logs deleted successfully' };
-              } else {
-                this.snackbar = { show: true, color: 'error', text: 'Error deleting logs: ' + response.data.message };
-              }
-            })
-            .catch(error => {
-              console.error('Error deleting logs:', error);
-              this.snackbar = { show: true, color: 'error', text: 'Error deleting logs. Check console for details.' };
-            });
-        },
-        // Serial port methods
-        refreshPorts() {
-          this.portsLoading = true;
-          axios.get('/api/serial/ports')
-            .then(response => {
-              if (response.data && Array.isArray(response.data.ports)) {
-                this.availablePorts = response.data.ports;
-                // If we haven't selected a port yet, and we have ports, select the first one
-                if (!this.selectedPort && this.availablePorts.length > 0) {
-                  this.selectedPort = this.availablePorts[0];
-                }
-              } else {
-                console.error("Invalid port data format:", response.data);
-                this.availablePorts = [];
-              }
-              this.portsLoading = false;
-            })
-            .catch(error => {
-              console.error("Error fetching available ports:", error);
-              this.snackbar = { 
-                show: true, 
-                color: 'error', 
-                text: 'Error fetching available COM ports' 
-              };
-              this.portsLoading = false;
-              this.availablePorts = [];
-            });
-        },
-        
-        onPortChange(port) {
-          if (!port) return;
-          
-          this.portsLoading = true;
-          axios.post('/api/serial/select', { port: port })
-            .then(response => {
-              if (response.data && response.data.success) {
-                this.snackbar = { 
-                  show: true, 
-                  color: 'success', 
-                  text: `Port switched to ${port}` 
-                };
-                // Refresh sensor info to show the new port
-                this.fetchSerialInfo();
-              } else {
-                this.snackbar = { 
-                  show: true, 
-                  color: 'error', 
-                  text: response.data.message || 'Error switching port' 
-                };
-              }
-              this.portsLoading = false;
-            })
-            .catch(error => {
-              console.error("Error switching port:", error);
-              this.snackbar = { 
-                show: true, 
-                color: 'error', 
-                text: 'Error switching to the selected port' 
-              };
-              this.portsLoading = false;
-            });
+        updateMessageTypes() {
+          // This method can be used to filter messages based on selected types
+          console.log('Selected message types:', this.selectedMessageTypes);
         }
       },
       mounted() {
-        // Fetch available serial ports on startup
-        this.refreshPorts();
-        
+        this.fetchPorts();
         this.fetchSerialInfo();
-        this.fetchData();
-        this.startRefreshTimer();
       },
       beforeDestroy() {
-        if (this.refreshTimer) {
-          clearInterval(this.refreshTimer);
-        }
+        this.stopPolling();
       }
     });
   </script>

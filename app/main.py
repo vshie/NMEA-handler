@@ -101,6 +101,65 @@ def index():
     """Serve the main page"""
     return send_from_directory(app.static_folder, 'index.html')
 
+@app.route('/register_service')
+def register_service():
+    """Provide extension metadata to BlueOS"""
+    return jsonify({
+        "name": "NMEA Handler",
+        "version": "0.1",
+        "description": "Monitor and log NMEA messages from serial devices",
+        "icon": "mdi-enterprise",
+        "author": "Tony White",
+        "website": "https://github.com/vshie/NMEA-handler",
+        "api": "0.1",
+        "frontend": {
+            "name": "NMEA Handler",
+            "icon": "mdi-enterprise",
+            "description": "Monitor and log NMEA messages from serial devices",
+            "category": "Sensors",
+            "order": 10
+        },
+        "services": [
+            {
+                "name": "NMEA Handler",
+                "icon": "mdi-enterprise",
+                "description": "Monitor and log NMEA messages from serial devices",
+                "category": "Sensors",
+                "order": 10,
+                "url": "/"
+            }
+        ]
+    })
+
+@app.route('/docs')
+def docs():
+    """Serve API documentation"""
+    return jsonify({
+        "openapi": "3.0.0",
+        "info": {
+            "title": "NMEA Handler API",
+            "version": "0.1",
+            "description": "API for monitoring and logging NMEA messages"
+        },
+        "paths": {
+            "/api/serial/ports": {
+                "get": {
+                    "summary": "Get available serial ports",
+                    "responses": {
+                        "200": {
+                            "description": "List of available ports"
+                        }
+                    }
+                }
+            }
+        }
+    })
+
+@app.route('/v1.0/ui/')
+def ui():
+    """Serve the UI"""
+    return send_from_directory(app.static_folder, 'index.html')
+
 @app.route('/api/serial/ports', methods=['GET'])
 def get_ports():
     """Get list of available serial ports"""
@@ -113,7 +172,14 @@ def select_port():
     if not data or 'port' not in data:
         return jsonify({"success": False, "message": "No port specified"})
     
-    success, message = nmea_handler.connect_serial(data['port'], 9600)
+    baud_rate = data.get('baud_rate', 9600)  # Default to 9600 if not specified
+    success, message = nmea_handler.connect_serial(data['port'], baud_rate)
+    return jsonify({"success": success, "message": message})
+
+@app.route('/api/serial/disconnect', methods=['POST'])
+def disconnect_port():
+    """Disconnect from serial port"""
+    success, message = nmea_handler.disconnect_serial()
     return jsonify({"success": success, "message": message})
 
 @app.route('/api/serial', methods=['GET'])
@@ -156,25 +222,6 @@ def delete_logs():
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
 
-@app.route('/register_service')
-def register_service():
-    """Provide extension metadata to BlueOS"""
-    return jsonify({
-        "name": "NMEA Handler",
-        "version": "0.1",
-        "description": "Monitor and log NMEA messages from serial devices",
-        "icon": "mdi-enterprise",
-        "author": "Tony White",
-        "website": "https://github.com/vshie/NMEA-handler",
-        "api": "0.1",
-        "frontend": {
-            "name": "NMEA Handler",
-            "icon": "mdi-enterprise",
-            "description": "Monitor and log NMEA messages from serial devices",
-            "category": "Sensors",
-            "order": 10
-        }
-    })
-
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=6436)
+    from waitress import serve
+    serve(app, host='0.0.0.0', port=6436)
