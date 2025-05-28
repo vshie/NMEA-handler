@@ -16,23 +16,20 @@ COPY app/ .
 
 # Install Python dependencies directly (without upgrading pip)
 # Install each package separately to avoid hash verification issues
-RUN pip install --no-cache-dir litestar==0.27.0 && \
+RUN pip install --no-cache-dir flask==2.0.1 && \
     pip install --no-cache-dir pyserial==3.5 && \
-    pip install --no-cache-dir msgspec==0.18.6 && \
-    pip install --no-cache-dir typing-extensions==4.9.0 && \
-    pip install --no-cache-dir anyio==4.3.0 && \
-    pip install --no-cache-dir click==8.1.7 && \
-    pip install --no-cache-dir h11==0.14.0 && \
-    pip install --no-cache-dir httptools==0.6.1 && \
-    pip install --no-cache-dir python-dotenv==1.0.1 && \
-    pip install --no-cache-dir pyyaml==6.0.2 && \
-    pip install --no-cache-dir uvicorn==0.27.1
+    pip install --no-cache-dir requests==2.28.1 && \
+    pip install --no-cache-dir Werkzeug==2.0.3 && \
+    pip install --no-cache-dir Jinja2==3.0.3 && \
+    pip install --no-cache-dir MarkupSafe==2.0.1 && \
+    pip install --no-cache-dir itsdangerous==2.0.1
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
+ENV FLASK_APP=app.py
 
 # Expose port
-EXPOSE 5000
+EXPOSE 6436
 
 # Set labels for BlueOS
 LABEL org.opencontainers.image.title="NMEA Handler"
@@ -42,7 +39,7 @@ LABEL org.opencontainers.image.vendor="Blue Robotics"
 LABEL permissions='\
 {\
   "ExposedPorts": {\
-    "5000/tcp": {}\
+    "6436/tcp": {}\
   },\
   "HostConfig": {\
     "CpuPeriod": 100000,\
@@ -58,7 +55,7 @@ LABEL permissions='\
     ],\
     "ExtraHosts": ["host.docker.internal:host-gateway"],\
     "PortBindings": {\
-      "5000/tcp": [\
+      "6436/tcp": [\
         {\
           "HostPort": ""\
         }\

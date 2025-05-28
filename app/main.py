@@ -5,60 +5,66 @@ import serial.tools.list_ports
 import logging
 import json
 from pathlib import Path
-from litestar import Litestar, get, post, MediaType
-from litestar.controller import Controller
-from litestar.datastructures import State
-from litestar.logging import LoggingConfig
-from litestar.static_files.config import StaticFilesConfig
+from flask import Flask, jsonify, request, send_file
+from flask_cors import CORS
 
-class NMEAController(Controller):
-    def __init__(self, *args, **kwargs):
+app = Flask(__name__)
+CORS(app)
+
+class NMEAHander:
+    def __init__(self):
         self.serial_connection = None
         self.logger = logging.getLogger(__name__)
         self.nmea_messages = set()
         self.log_path = Path('/app/logs/nmea_messages.log')
-        super().__init__(*args, **kwargs)
+        
+        # Configure logging
+        log_dir = Path('/app/logs')
+        log_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Set up file handler for NMEA messages
+        fh = logging.FileHandler(self.log_path)
+        fh.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(message)s')
+        fh.setFormatter(formatter)
+        self.logger.addHandler(fh)
+        
+        # Set up file handler for application logs
+        app_log_path = log_dir / 'nmea_handler.log'
+        app_fh = logging.FileHandler(app_log_path)
+        app_fh.setLevel(logging.INFO)
+        app_fh.setFormatter(formatter)
+        self.logger.addHandler(app_fh)
 
-    @get("/ports", sync_to_thread=False)
-    def get_ports(self) -> dict:
+    def get_ports(self):
         """Get list of available serial ports"""
-        ports = [port.device for port in serial.tools.list_ports.comports()]
-        return {"ports": ports}
+        return [port.device for port in serial.tools.list_ports.comports()]
 
-    @get("/baud_rates", sync_to_thread=False)
-    def get_baud_rates(self) -> dict:
-        """Get list of common baud rates"""
-        rates = [9600, 19200, 38400, 57600, 115200]
-        return {"rates": rates}
-
-    @post("/connect", sync_to_thread=True)
-    def connect_serial(self, data: dict) -> dict:
+    def connect_serial(self, port, baud_rate):
         """Connect to serial port with specified settings"""
         try:
             if self.serial_connection and self.serial_connection.is_open:
                 self.serial_connection.close()
             
             self.serial_connection = serial.Serial(
-                port=data["port"],
-                baudrate=data["baud_rate"],
+                port=port,
+                baudrate=baud_rate,
                 timeout=1
             )
-            return {"status": "connected", "message": f"Connected to {data['port']} at {data['baud_rate']} baud"}
+            return True, f"Connected to {port} at {baud_rate} baud"
         except Exception as e:
-            return {"status": "error", "message": str(e)}
+            return False, str(e)
 
-    @get("/disconnect", sync_to_thread=True)
-    def disconnect_serial(self) -> dict:
+    def disconnect_serial(self):
         """Disconnect from serial port"""
         try:
             if self.serial_connection and self.serial_connection.is_open:
                 self.serial_connection.close()
-            return {"status": "disconnected", "message": "Disconnected from serial port"}
+            return True, "Disconnected from serial port"
         except Exception as e:
-            return {"status": "error", "message": str(e)}
+            return False, str(e)
 
-    @get("/read", sync_to_thread=True)
-    def read_serial(self) -> dict:
+    def read_serial(self):
         """Read data from serial port"""
         if not self.serial_connection or not self.serial_connection.is_open:
             return {"status": "error", "message": "Not connected"}
@@ -79,38 +85,71 @@ class NMEAController(Controller):
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    @post("/log_message", sync_to_thread=True)
-    def log_message(self, data: dict) -> dict:
-        """Enable/disable logging for specific NMEA message type"""
+    def log_message(self, message):
+        """Log NMEA message"""
         try:
-            with open(self.log_path, 'a') as f:
-                f.write(f"{data['message']}\n")
-            return {"status": "success", "message": "Message logged"}
+            self.logger.info(message)
+            return True, "Message logged"
         except Exception as e:
-            return {"status": "error", "message": str(e)}
+            return False, str(e)
 
-# Configure logging
-logging_config = LoggingConfig(
-    loggers={
-        __name__: dict(
-            level='INFO',
-            handlers=['queue_listener'],
-        )
-    },
-)
+# Create NMEA handler instance
+nmea_handler = NMEAHander()
 
-# Create log directory and set permissions
-log_dir = Path('/app/logs')
-log_dir.mkdir(parents=True, exist_ok=True)
-fh = logging.handlers.RotatingFileHandler(log_dir / 'nmea_handler.log', maxBytes=2**16, backupCount=1)
+@app.route('/api/serial/ports', methods=['GET'])
+def get_ports():
+    """Get list of available serial ports"""
+    return jsonify({"ports": nmea_handler.get_ports()})
 
-# Create application
-app = Litestar(
-    route_handlers=[NMEAController],
-    static_files_config=[
-        StaticFilesConfig(directories=['app/static'], path='/', html_mode=True)
-    ],
-    logging_config=logging_config,
-)
+@app.route('/api/serial/select', methods=['POST'])
+def select_port():
+    """Select and connect to a serial port"""
+    data = request.get_json()
+    if not data or 'port' not in data:
+        return jsonify({"success": False, "message": "No port specified"})
+    
+    success, message = nmea_handler.connect_serial(data['port'], 9600)
+    return jsonify({"success": success, "message": message})
 
-app.logger.addHandler(fh)
+@app.route('/api/serial', methods=['GET'])
+def get_serial_info():
+    """Get current serial port information"""
+    if nmea_handler.serial_connection and nmea_handler.serial_connection.is_open:
+        return jsonify({
+            "serial_port": nmea_handler.serial_connection.port,
+            "baud_rate": nmea_handler.serial_connection.baudrate
+        })
+    return jsonify({"serial_port": "Not connected", "baud_rate": 0})
+
+@app.route('/api/read', methods=['GET'])
+def read_serial():
+    """Read data from serial port"""
+    return jsonify(nmea_handler.read_serial())
+
+@app.route('/api/log_message', methods=['POST'])
+def log_message():
+    """Log NMEA message"""
+    data = request.get_json()
+    if not data or 'message' not in data:
+        return jsonify({"success": False, "message": "No message specified"})
+    
+    success, message = nmea_handler.log_message(data['message'])
+    return jsonify({"success": success, "message": message})
+
+@app.route('/api/logs', methods=['GET'])
+def download_logs():
+    """Download log file"""
+    return send_file(nmea_handler.log_path, as_attachment=True)
+
+@app.route('/api/logs/delete', methods=['POST'])
+def delete_logs():
+    """Delete log file"""
+    try:
+        if nmea_handler.log_path.exists():
+            nmea_handler.log_path.unlink()
+        return jsonify({"success": True, "message": "Logs deleted successfully"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=6436)
