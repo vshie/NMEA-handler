@@ -58,8 +58,9 @@ LABEL permissions='\
       "/dev/ttyUSB1:/dev/ttyUSB1",\
       "/dev/ttyUSB2:/dev/ttyUSB2",\
       "/dev/ttyUSB3:/dev/ttyUSB3",\
-      "/dev/ttyACM0:/dev/ttyACM0",\
-      "/dev/ttyACM1:/dev/ttyACM1"\
+      "/dev/ttyACM0:/dev/ttyAMA1",\
+      "/dev/ttyACM0:/dev/ttyAMA2",\
+      "/dev/ttyACM1:/dev/ttyAMA3"\
     ],\
     "ExtraHosts": ["host.docker.internal:host-gateway"],\
     "PortBindings": {\

@@ -108,11 +108,40 @@ class NMEAHander:
             except Exception as e:
                 self.logger.error(f"Error streaming message: {e}")
 
+    def get_ports(self):
+        """Get list of available serial ports"""
+        ports = []
+        # Check common USB serial ports
+        for i in range(4):  # Check ttyUSB0 through ttyUSB3
+            port = f'/dev/ttyUSB{i}'
+            if Path(port).exists():
+                ports.append(port)
+        
+        # Check common ACM ports
+        for i in range(2):  # Check ttyACM0 through ttyACM1
+            port = f'/dev/ttyAMA{i}'
+            if Path(port).exists():
+                ports.append(port)
+        
+        # Also check using pyserial's list_ports
+        try:
+            for port in serial.tools.list_ports.comports():
+                if port.device not in ports:
+                    ports.append(port.device)
+        except Exception as e:
+            self.logger.error(f"Error listing ports: {e}")
+        
+        return ports
+
     def connect_serial(self, port, baud_rate):
         """Connect to serial port with specified settings"""
         try:
             if self.serial_connection and self.serial_connection.is_open:
                 self.serial_connection.close()
+            
+            # Verify port exists before attempting connection
+            if not Path(port).exists():
+                return False, f"Port {port} does not exist"
             
             self.serial_connection = serial.Serial(
                 port=port,
