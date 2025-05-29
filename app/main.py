@@ -187,7 +187,7 @@ def select_port():
     if not data or 'port' not in data:
         return jsonify({"success": False, "message": "No port specified"})
     
-    baud_rate = data.get('baud_rate', 9600)  # Default to 9600 if not specified
+    baud_rate = data.get('baud_rate', 4800)  # Default to 4800 if not specified
     success, message = nmea_handler.connect_serial(data['port'], baud_rate)
     return jsonify({"success": success, "message": message})
 
