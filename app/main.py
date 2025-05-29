@@ -4,6 +4,7 @@ import serial
 import serial.tools.list_ports
 import logging
 import json
+import socket
 from pathlib import Path
 from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
@@ -17,14 +18,24 @@ class NMEAHander:
         self.serial_connection = None
         self.logger = logging.getLogger(__name__)
         self.nmea_messages = set()
+        self.selected_message_types = set()
         self.log_path = Path('/app/logs/nmea_messages.log')
+        self.state_path = Path('/app/logs/state.json')
+        self.udp_socket = None
+        self.is_streaming = False
+        self.state = {
+            'port': None,
+            'baud_rate': 4800,
+            'is_streaming': False,
+            'selected_message_types': []
+        }
         
         # Configure logging
         log_dir = Path('/app/logs')
         log_dir.mkdir(parents=True, exist_ok=True)
         
         # Set up file handler for NMEA messages
-        fh = logging.FileHandler(self.log_path, mode='a')  # Use append mode
+        fh = logging.FileHandler(self.log_path, mode='a')
         fh.setLevel(logging.INFO)
         formatter = logging.Formatter('%(asctime)s - %(message)s')
         fh.setFormatter(formatter)
@@ -32,14 +43,70 @@ class NMEAHander:
         
         # Set up file handler for application logs
         app_log_path = log_dir / 'nmea_handler.log'
-        app_fh = logging.FileHandler(app_log_path, mode='a')  # Use append mode
+        app_fh = logging.FileHandler(app_log_path, mode='a')
         app_fh.setLevel(logging.INFO)
         app_fh.setFormatter(formatter)
         self.logger.addHandler(app_fh)
 
-    def get_ports(self):
-        """Get list of available serial ports"""
-        return [port.device for port in serial.tools.list_ports.comports()]
+        # Load saved state
+        self.load_state()
+
+    def load_state(self):
+        """Load saved state from file"""
+        try:
+            if self.state_path.exists():
+                with open(self.state_path, 'r') as f:
+                    self.state = json.load(f)
+                    self.selected_message_types = set(self.state.get('selected_message_types', []))
+        except Exception as e:
+            self.logger.error(f"Error loading state: {e}")
+
+    def save_state(self):
+        """Save current state to file"""
+        try:
+            self.state['selected_message_types'] = list(self.selected_message_types)
+            with open(self.state_path, 'w') as f:
+                json.dump(self.state, f)
+        except Exception as e:
+            self.logger.error(f"Error saving state: {e}")
+
+    def start_streaming(self):
+        """Start UDP streaming"""
+        try:
+            if not self.udp_socket:
+                self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.is_streaming = True
+            self.state['is_streaming'] = True
+            self.save_state()
+            return True, "Streaming started"
+        except Exception as e:
+            return False, str(e)
+
+    def stop_streaming(self):
+        """Stop UDP streaming"""
+        try:
+            if self.udp_socket:
+                self.udp_socket.close()
+                self.udp_socket = None
+            self.is_streaming = False
+            self.state['is_streaming'] = False
+            self.save_state()
+            return True, "Streaming stopped"
+        except Exception as e:
+            return False, str(e)
+
+    def update_selected_message_types(self, message_types):
+        """Update the set of selected message types"""
+        self.selected_message_types = set(message_types)
+        self.save_state()
+
+    def stream_message(self, message, msg_type):
+        """Stream message via UDP if type is selected"""
+        if self.is_streaming and self.udp_socket and msg_type in self.selected_message_types:
+            try:
+                self.udp_socket.sendto(message.encode(), ('localhost', 27000))
+            except Exception as e:
+                self.logger.error(f"Error streaming message: {e}")
 
     def connect_serial(self, port, baud_rate):
         """Connect to serial port with specified settings"""
@@ -52,6 +119,10 @@ class NMEAHander:
                 baudrate=baud_rate,
                 timeout=1
             )
+            # Save state
+            self.state['port'] = port
+            self.state['baud_rate'] = baud_rate
+            self.save_state()
             return True, f"Connected to {port} at {baud_rate} baud"
         except Exception as e:
             return False, str(e)
@@ -61,6 +132,9 @@ class NMEAHander:
         try:
             if self.serial_connection and self.serial_connection.is_open:
                 self.serial_connection.close()
+            # Update state
+            self.state['port'] = None
+            self.save_state()
             return True, "Disconnected from serial port"
         except Exception as e:
             return False, str(e)
@@ -78,6 +152,8 @@ class NMEAHander:
                 self.nmea_messages.add(msg_type)
                 # Log the message
                 self.log_message(data)
+                # Stream the message if streaming is active and type is selected
+                self.stream_message(data, msg_type)
                 return {
                     "status": "success",
                     "raw": data,
@@ -241,6 +317,37 @@ def delete_logs():
         return jsonify({"success": True, "message": "Logs deleted successfully"})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
+
+@app.route('/api/stream/start', methods=['POST'])
+def start_streaming():
+    """Start UDP streaming"""
+    success, message = nmea_handler.start_streaming()
+    return jsonify({"success": success, "message": message})
+
+@app.route('/api/stream/stop', methods=['POST'])
+def stop_streaming():
+    """Stop UDP streaming"""
+    success, message = nmea_handler.stop_streaming()
+    return jsonify({"success": success, "message": message})
+
+@app.route('/api/stream/status', methods=['GET'])
+def get_streaming_status():
+    """Get current streaming status"""
+    return jsonify({
+        "is_streaming": nmea_handler.is_streaming,
+        "port": nmea_handler.state['port'],
+        "baud_rate": nmea_handler.state['baud_rate']
+    })
+
+@app.route('/api/message_types/update', methods=['POST'])
+def update_message_types():
+    """Update selected message types"""
+    data = request.get_json()
+    if not data or 'message_types' not in data:
+        return jsonify({"success": False, "message": "No message types specified"})
+    
+    nmea_handler.update_selected_message_types(data['message_types'])
+    return jsonify({"success": True, "message": "Message types updated"})
 
 if __name__ == '__main__':
     from waitress import serve

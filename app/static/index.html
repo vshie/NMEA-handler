@@ -98,13 +98,21 @@
                   >
                     Connect
                   </v-btn>
-                  <v-btn
-                    v-else
-                    color="error"
-                    @click="disconnectPort"
-                  >
-                    Disconnect
-                  </v-btn>
+                  <template v-else>
+                    <v-btn
+                      color="error"
+                      @click="disconnectPort"
+                      class="mr-2"
+                    >
+                      Disconnect
+                    </v-btn>
+                    <v-btn
+                      :color="isStreaming ? 'error' : 'primary'"
+                      @click="toggleStreaming"
+                    >
+                      {{ isStreaming ? 'Stop Stream' : 'Start Stream' }}
+                    </v-btn>
+                  </template>
                 </v-col>
               </v-row>
             </v-card-text>
@@ -187,7 +195,8 @@
         selectedBaudRate: 4800,
         availableMessageTypes: [],
         selectedMessageTypes: [],
-        pollingInterval: null
+        pollingInterval: null,
+        isStreaming: false
       },
       methods: {
         async fetchPorts() {
@@ -207,21 +216,54 @@
             });
             if (response.data.success) {
               this.startPolling();
+              await this.checkStreamingStatus();
             }
           } catch (error) {
             console.error('Error connecting to port:', error);
           }
         },
-        async updateBaudRate() {
-          console.log('Baud rate updated to:', this.selectedBaudRate);
+        async toggleStreaming() {
+          try {
+            if (this.isStreaming) {
+              const response = await axios.post('/api/stream/stop');
+              if (response.data.success) {
+                this.isStreaming = false;
+              }
+            } else {
+              const response = await axios.post('/api/stream/start');
+              if (response.data.success) {
+                this.isStreaming = true;
+              }
+            }
+          } catch (error) {
+            console.error('Error toggling streaming:', error);
+          }
+        },
+        async checkStreamingStatus() {
+          try {
+            const response = await axios.get('/api/stream/status');
+            this.isStreaming = response.data.is_streaming;
+            if (response.data.is_streaming) {
+              await this.toggleStreaming();
+            }
+            if (response.data.selected_message_types) {
+              this.selectedMessageTypes = response.data.selected_message_types;
+            }
+          } catch (error) {
+            console.error('Error checking streaming status:', error);
+          }
         },
         async disconnectPort() {
           try {
+            if (this.isStreaming) {
+              await this.toggleStreaming();
+            }
             await axios.post('/api/serial/disconnect');
             this.stopPolling();
             this.messages = [];
             this.availableMessageTypes = [];
             this.selectedMessageTypes = [];
+            this.isStreaming = false;
           } catch (error) {
             console.error('Error disconnecting:', error);
           }
@@ -261,7 +303,6 @@
         async downloadLogs() {
           try {
             const response = await axios.get('/api/logs', { responseType: 'blob' });
-            // Create a blob URL and trigger download
             const url = window.URL.createObjectURL(new Blob([response.data]));
             const link = document.createElement('a');
             link.href = url;
@@ -271,7 +312,6 @@
             link.remove();
           } catch (error) {
             if (error.response && error.response.status === 404) {
-              // Show error message from the server
               const reader = new FileReader();
               reader.onload = () => {
                 const errorData = JSON.parse(reader.result);
@@ -304,13 +344,17 @@
           }
         },
         updateMessageTypes() {
-          // This method can be used to filter messages based on selected types
-          console.log('Selected message types:', this.selectedMessageTypes);
+          axios.post('/api/message_types/update', {
+            message_types: this.selectedMessageTypes
+          }).catch(error => {
+            console.error('Error updating message types:', error);
+          });
         }
       },
       mounted() {
         this.fetchPorts();
         this.fetchSerialInfo();
+        this.checkStreamingStatus();
       },
       beforeDestroy() {
         this.stopPolling();
