@@ -78,8 +78,11 @@ class NMEAHander:
             self.is_streaming = True
             self.state['is_streaming'] = True
             self.save_state()
+            self.logger.info(f"UDP streaming started to host.docker.internal:27000")
+            self.logger.info(f"Streaming selected message types: {', '.join(sorted(self.selected_message_types))}")
             return True, "Streaming started"
         except Exception as e:
+            self.logger.error(f"Error starting UDP stream: {e}")
             return False, str(e)
 
     def stop_streaming(self):
@@ -91,20 +94,27 @@ class NMEAHander:
             self.is_streaming = False
             self.state['is_streaming'] = False
             self.save_state()
+            self.logger.info("UDP streaming stopped")
             return True, "Streaming stopped"
         except Exception as e:
+            self.logger.error(f"Error stopping UDP stream: {e}")
             return False, str(e)
 
     def update_selected_message_types(self, message_types):
         """Update the set of selected message types"""
+        old_types = self.selected_message_types
         self.selected_message_types = set(message_types)
         self.save_state()
+        self.logger.info(f"Updated streaming message types: {', '.join(sorted(self.selected_message_types))}")
+        if self.is_streaming:
+            self.logger.info(f"Streaming active with types: {', '.join(sorted(self.selected_message_types))}")
 
     def stream_message(self, message, msg_type):
         """Stream message via UDP if type is selected"""
         if self.is_streaming and self.udp_socket and msg_type in self.selected_message_types:
             try:
                 self.udp_socket.sendto(message.encode(), ('host.docker.internal', 27000))
+                self.logger.debug(f"Streamed {msg_type} message: {message}")
             except Exception as e:
                 self.logger.error(f"Error streaming message: {e}")
 
@@ -365,7 +375,9 @@ def get_streaming_status():
     return jsonify({
         "is_streaming": nmea_handler.is_streaming,
         "port": nmea_handler.state['port'],
-        "baud_rate": nmea_handler.state['baud_rate']
+        "baud_rate": nmea_handler.state['baud_rate'],
+        "selected_message_types": list(nmea_handler.selected_message_types),
+        "streaming_to": "host.docker.internal:27000" if nmea_handler.is_streaming else None
     })
 
 @app.route('/api/message_types/update', methods=['POST'])

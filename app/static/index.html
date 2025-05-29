@@ -89,6 +89,16 @@
                   >
                     Connected to {{ serialPortInfo.serial_port }} at {{ serialPortInfo.baud_rate }} baud
                   </v-alert>
+                  <v-alert
+                    v-if="isStreaming"
+                    type="info"
+                    dense
+                    class="connection-status"
+                  >
+                    Streaming to {{ streamingStatus.streaming_to }}
+                    <br>
+                    Active message types: {{ streamingStatus.selected_message_types.join(', ') }}
+                  </v-alert>
                   <v-btn
                     v-if="serialPortInfo.serial_port === 'Not connected'"
                     color="primary"
@@ -196,7 +206,11 @@
         availableMessageTypes: [],
         selectedMessageTypes: [],
         pollingInterval: null,
-        isStreaming: false
+        isStreaming: false,
+        streamingStatus: {
+          streaming_to: null,
+          selected_message_types: []
+        }
       },
       methods: {
         async fetchPorts() {
@@ -243,6 +257,10 @@
           try {
             const response = await axios.get('/api/stream/status');
             this.isStreaming = response.data.is_streaming;
+            this.streamingStatus = {
+              streaming_to: response.data.streaming_to,
+              selected_message_types: response.data.selected_message_types
+            };
             if (response.data.is_streaming) {
               await this.toggleStreaming();
             }
