@@ -104,7 +104,7 @@ class NMEAHander:
         """Stream message via UDP if type is selected"""
         if self.is_streaming and self.udp_socket and msg_type in self.selected_message_types:
             try:
-                self.udp_socket.sendto(message.encode(), ('http://host.docker.internal', 27000))
+                self.udp_socket.sendto(message.encode(), ('host.docker.internal', 27000))
             except Exception as e:
                 self.logger.error(f"Error streaming message: {e}")
 
