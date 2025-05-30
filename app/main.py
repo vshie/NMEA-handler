@@ -113,14 +113,31 @@ class NMEAHander:
 
     def stream_message(self, message, msg_type):
         """Stream message via UDP if type is selected"""
-        if self.is_streaming and self.udp_socket and msg_type in self.selected_message_types:
+        if self.is_streaming and msg_type in self.selected_message_types:
+            self.logger.info(f"Attempting to stream message type: {msg_type}")
             try:
+                # Check if socket is still valid
+                if not self.udp_socket:
+                    self.logger.info("Creating new UDP socket")
+                    self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                
                 # Send raw NMEA message with newline
-                self.udp_socket.sendto((message + '\n').encode(), ('host.docker.internal', 27000))
+                encoded_message = (message + '\n').encode()
+                self.logger.info(f"Sending UDP packet to host.docker.internal:27000 - Length: {len(encoded_message)} bytes")
+                self.udp_socket.sendto(encoded_message, ('host.docker.internal', 27000))
                 self.streamed_messages += 1
-                self.logger.info(f"Streamed message #{self.streamed_messages}: {msg_type} - {message}")
+                self.logger.info(f"Successfully streamed message #{self.streamed_messages}: {msg_type} - {message}")
             except Exception as e:
                 self.logger.error(f"Error streaming message: {e}")
+                # Try to recreate socket on error
+                try:
+                    if self.udp_socket:
+                        self.logger.info("Closing existing UDP socket due to error")
+                        self.udp_socket.close()
+                    self.logger.info("Creating new UDP socket after error")
+                    self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                except Exception as socket_error:
+                    self.logger.error(f"Failed to recreate socket: {socket_error}")
 
     def get_ports(self):
         """Get list of available serial ports"""
