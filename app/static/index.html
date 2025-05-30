@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html>
-<head>
+    <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, minimal-ui">
   <title>NMEA Handler</title>
@@ -249,13 +249,17 @@
               const response = await axios.post('/api/stream/stop');
               if (response.data.success) {
                 this.isStreaming = false;
+                this.streamingStatus.streamed_messages = 0;
               }
             } else {
               const response = await axios.post('/api/stream/start');
               if (response.data.success) {
                 this.isStreaming = true;
+                this.streamingStatus.streamed_messages = 0;
               }
             }
+            // Update streaming status after toggle
+            await this.checkStreamingStatus();
           } catch (error) {
             console.error('Error toggling streaming:', error);
           }
@@ -266,13 +270,15 @@
             this.isStreaming = response.data.is_streaming;
             this.streamingStatus = {
               streaming_to: response.data.streaming_to,
-              selected_message_types: response.data.selected_message_types,
-              streamed_messages: response.data.streamed_messages
+              selected_message_types: response.data.selected_message_types || [],
+              streamed_messages: response.data.streamed_messages || 0
             };
-            if (response.data.is_streaming) {
+            // Only restore streaming if it was active
+            if (response.data.is_streaming && !this.isStreaming) {
               await this.toggleStreaming();
             }
-            if (response.data.selected_message_types) {
+            // Update selected message types if available
+            if (response.data.selected_message_types && response.data.selected_message_types.length > 0) {
               this.selectedMessageTypes = response.data.selected_message_types;
             }
           } catch (error) {
@@ -309,7 +315,11 @@
               this.messages.unshift(response.data);
               if (response.data.available_types) {
                 this.availableMessageTypes = response.data.available_types;
-                this.selectedMessageTypes = [...response.data.available_types];
+                // Only update selected types if none are selected
+                if (this.selectedMessageTypes.length === 0) {
+                  this.selectedMessageTypes = [...response.data.available_types];
+                  this.updateMessageTypes();
+                }
               }
               if (this.messages.length > 100) {
                 this.messages.pop();
@@ -386,6 +396,6 @@
         this.stopPolling();
       }
     });
-  </script>
-</body>
+        </script>
+    </body>
 </html>

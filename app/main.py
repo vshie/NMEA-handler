@@ -195,7 +195,8 @@ class NMEAHander:
                 # Log the message
                 self.log_message(data)
                 # Stream the message if streaming is active and type is selected
-                self.stream_message(data, msg_type)
+                if self.is_streaming and msg_type in self.selected_message_types:
+                    self.stream_message(data, msg_type)
                 return {
                     "status": "success",
                     "raw": data,
