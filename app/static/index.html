@@ -371,6 +371,7 @@
           this.pollingInterval = setInterval(() => {
             this.readSerial();
             this.fetchSerialInfo();
+            this.checkStreamingStatus();
           }, 1000);
         },
         stopPolling() {

@@ -90,7 +90,7 @@ class NMEAHander:
             self.streamed_messages = 0  # Reset counter
             self.state['is_streaming'] = True
             self.save_state()
-            self.app_logger.info(f"UDP streaming started to host.docker.internal:27000")
+            self.app_logger.info(f"UDP streaming started to 192.168.2.2:27000")
             self.app_logger.info(f"Streaming selected message types: {', '.join(sorted(self.selected_message_types))}")
             return True, "Streaming started"
         except Exception as e:
