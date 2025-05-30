@@ -29,6 +29,7 @@ class NMEAHander:
         self.udp_socket = None
         self.is_streaming = False
         self.streamed_messages = 0
+        self.last_message = None  # Store the last received message
         self.state = {
             'port': None,
             'baud_rate': 4800,
@@ -130,6 +131,11 @@ class NMEAHander:
                         # Parse NMEA message
                         msg_type = data.split(',')[0][1:]  # Remove $ and get message type
                         self.nmea_messages.add(msg_type)
+                        # Store the last message
+                        self.last_message = {
+                            "raw": data,
+                            "type": msg_type
+                        }
                         # Log the message
                         self.log_message(data)
                         # Stream the message if streaming is active and type is selected
@@ -262,21 +268,39 @@ class NMEAHander:
     def disconnect_serial(self):
         """Disconnect from serial port"""
         try:
+            # Stop streaming first
+            if self.is_streaming:
+                self.stop_streaming()
+            
+            # Stop the reader thread
             self.stop_reader_thread()
+            
+            # Close the serial connection
             if self.serial_connection and self.serial_connection.is_open:
                 self.serial_connection.close()
-            # Update state
+            
+            # Reset state
             self.state['port'] = None
+            self.last_message = None
             self.save_state()
+            
             return True, "Disconnected from serial port"
         except Exception as e:
+            self.app_logger.error(f"Error disconnecting: {e}")
             return False, str(e)
 
     def read_serial(self):
-        """Read data from serial port - now just returns the last message"""
+        """Read data from serial port - returns the last received message"""
         if not self.serial_connection or not self.serial_connection.is_open:
             return {"status": "error", "message": "Not connected"}
         
+        if self.last_message:
+            return {
+                "status": "success",
+                "raw": self.last_message["raw"],
+                "type": self.last_message["type"],
+                "available_types": list(self.nmea_messages)
+            }
         return {
             "status": "success",
             "available_types": list(self.nmea_messages)

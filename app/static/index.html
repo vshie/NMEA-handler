@@ -290,12 +290,17 @@
             if (this.isStreaming) {
               await this.toggleStreaming();
             }
-            await axios.post('/api/serial/disconnect');
-            this.stopPolling();
-            this.messages = [];
-            this.availableMessageTypes = [];
-            this.selectedMessageTypes = [];
-            this.isStreaming = false;
+            const response = await axios.post('/api/serial/disconnect');
+            if (response.data.success) {
+              this.stopPolling();
+              this.messages = [];
+              this.availableMessageTypes = [];
+              this.selectedMessageTypes = [];
+              this.isStreaming = false;
+              this.serialPortInfo = { serial_port: 'Not connected', baud_rate: 0 };
+              // Force refresh available ports
+              await this.fetchPorts();
+            }
           } catch (error) {
             console.error('Error disconnecting:', error);
           }
@@ -304,6 +309,10 @@
           try {
             const response = await axios.get('/api/serial');
             this.serialPortInfo = response.data;
+            // If we're not connected but the backend says we are, update our state
+            if (this.serialPortInfo.serial_port !== 'Not connected' && !this.pollingInterval) {
+              this.startPolling();
+            }
           } catch (error) {
             console.error('Error fetching serial info:', error);
           }
@@ -312,7 +321,12 @@
           try {
             const response = await axios.get('/api/read');
             if (response.data.status === 'success') {
-              this.messages.unshift(response.data);
+              if (response.data.raw) {  // Only add message if we have raw data
+                this.messages.unshift(response.data);
+                if (this.messages.length > 100) {
+                  this.messages.pop();
+                }
+              }
               if (response.data.available_types) {
                 this.availableMessageTypes = response.data.available_types;
                 // Only update selected types if none are selected
@@ -320,9 +334,6 @@
                   this.selectedMessageTypes = [...response.data.available_types];
                   this.updateMessageTypes();
                 }
-              }
-              if (this.messages.length > 100) {
-                this.messages.pop();
               }
             }
           } catch (error) {
