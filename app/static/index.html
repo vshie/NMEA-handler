@@ -95,9 +95,15 @@
                     dense
                     class="connection-status"
                   >
-                    Streaming to {{ streamingStatus.streaming_to }}
-                    <br>
-                    Active message types: {{ streamingStatus.selected_message_types.join(', ') }}
+                    <div class="d-flex align-center">
+                      <v-icon class="mr-2">mdi-broadcast</v-icon>
+                      <div>
+                        <strong>Streaming Active</strong>
+                        <div>Destination: {{ streamingStatus.streaming_to }}</div>
+                        <div>Messages sent: {{ streamingStatus.streamed_messages }}</div>
+                        <div>Active message types: {{ streamingStatus.selected_message_types.join(', ') }}</div>
+                      </div>
+                    </div>
                   </v-alert>
                   <v-btn
                     v-if="serialPortInfo.serial_port === 'Not connected'"
@@ -209,7 +215,8 @@
         isStreaming: false,
         streamingStatus: {
           streaming_to: null,
-          selected_message_types: []
+          selected_message_types: [],
+          streamed_messages: 0
         }
       },
       methods: {
@@ -259,7 +266,8 @@
             this.isStreaming = response.data.is_streaming;
             this.streamingStatus = {
               streaming_to: response.data.streaming_to,
-              selected_message_types: response.data.selected_message_types
+              selected_message_types: response.data.selected_message_types,
+              streamed_messages: response.data.streamed_messages
             };
             if (response.data.is_streaming) {
               await this.toggleStreaming();

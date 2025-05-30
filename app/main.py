@@ -23,6 +23,7 @@ class NMEAHander:
         self.state_path = Path('/app/logs/state.json')
         self.udp_socket = None
         self.is_streaming = False
+        self.streamed_messages = 0  # Add message counter
         self.state = {
             'port': None,
             'baud_rate': 4800,
@@ -76,6 +77,7 @@ class NMEAHander:
             if not self.udp_socket:
                 self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.is_streaming = True
+            self.streamed_messages = 0  # Reset counter
             self.state['is_streaming'] = True
             self.save_state()
             self.logger.info(f"UDP streaming started to host.docker.internal:27000")
@@ -114,7 +116,8 @@ class NMEAHander:
         if self.is_streaming and self.udp_socket and msg_type in self.selected_message_types:
             try:
                 self.udp_socket.sendto(message.encode(), ('host.docker.internal', 27000))
-                self.logger.debug(f"Streamed {msg_type} message: {message}")
+                self.streamed_messages += 1
+                self.logger.info(f"Streamed message #{self.streamed_messages}: {msg_type} - {message}")
             except Exception as e:
                 self.logger.error(f"Error streaming message: {e}")
 
@@ -377,7 +380,8 @@ def get_streaming_status():
         "port": nmea_handler.state['port'],
         "baud_rate": nmea_handler.state['baud_rate'],
         "selected_message_types": list(nmea_handler.selected_message_types),
-        "streaming_to": "host.docker.internal:27000" if nmea_handler.is_streaming else None
+        "streaming_to": "host.docker.internal:27000" if nmea_handler.is_streaming else None,
+        "streamed_messages": nmea_handler.streamed_messages
     })
 
 @app.route('/api/message_types/update', methods=['POST'])
