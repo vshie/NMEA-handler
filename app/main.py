@@ -253,7 +253,7 @@ def index():
 def register_service():
     """Provide extension metadata to BlueOS"""
     try:
-        with open('static/register_service.json', 'r') as f:
+        with open('app/static/register_service', 'r') as f:
             return jsonify(json.load(f))
     except Exception as e:
         app.logger.error(f"Error loading register_service.json: {e}")
