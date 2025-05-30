@@ -252,12 +252,15 @@ def index():
 @app.route('/register_service')
 def register_service():
     """Provide extension metadata to BlueOS"""
-    try:
-        with open('app/static/register_service', 'r') as f:
-            return jsonify(json.load(f))
-    except Exception as e:
-        app.logger.error(f"Error loading register_service.json: {e}")
-        return jsonify({"error": "Failed to load service registration"}), 500
+    return jsonify({
+        "name": "NMEA Handler",
+        "description": "Route nmea data",
+        "icon": "mdi-enterprise",
+        "company": "Blue Robotics",
+        "version": "0.0.1",
+        "webpage": "https://github.com/vshie/NMEA-handler",
+        "api": "https://github.com/vshie/NMEA-handler"
+    })
 
 @app.route('/docs')
 def docs():
