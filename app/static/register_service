@@ -1,10 +1,10 @@
 {
-    "name":"QuickStart",
+    "name":"NMEA Handler",
     "description":"Example Extension",
-    "icon":"mdi-clock",
+    "icon":"mdi-enterprise",
     "company":"Blue Robotics",
     "version":"0.0.1",
-    "webpage":"https://example.com",
-    "api":""
+    "webpage":"https://github.com/vshie/NMEA-handler",
+    "api":"https://github.com/vshie/NMEA-handler"
 }
 

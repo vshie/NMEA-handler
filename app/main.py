@@ -115,7 +115,8 @@ class NMEAHander:
         """Stream message via UDP if type is selected"""
         if self.is_streaming and self.udp_socket and msg_type in self.selected_message_types:
             try:
-                self.udp_socket.sendto(message.encode(), ('host.docker.internal', 27000))
+                # Send raw NMEA message with newline
+                self.udp_socket.sendto((message + '\n').encode(), ('host.docker.internal', 27000))
                 self.streamed_messages += 1
                 self.logger.info(f"Streamed message #{self.streamed_messages}: {msg_type} - {message}")
             except Exception as e:
@@ -234,36 +235,12 @@ def index():
 @app.route('/register_service')
 def register_service():
     """Provide extension metadata to BlueOS"""
-    return jsonify({
-        "name": "NMEA Handler",
-        "version": "0.1",
-        "description": "Monitor and log NMEA messages from serial devices",
-        "icon": "mdi-enterprise",
-        "author": "Tony White",
-        "website": "https://github.com/vshie/NMEA-handler",
-        "api": "0.1",
-        "frontend": {
-            "name": "NMEA Handler",
-            "icon": "mdi-enterprise",
-            "description": "Monitor and log NMEA messages from serial devices",
-            "category": "Sensors",
-            "order": 10
-        },
-        "services": [
-            {
-                "name": "NMEA Handler",
-                "icon": "mdi-enterprise",
-                "description": "Monitor and log NMEA messages from serial devices",
-                "category": "Sensors",
-                "order": 10,
-                "url": "/",
-                "type": "tool",
-                "version": "0.1",
-                "api": "0.1",
-                "requirements": "core >= 1.1"
-            }
-        ]
-    })
+    try:
+        with open('register_service.json', 'r') as f:
+            return jsonify(json.load(f))
+    except Exception as e:
+        app.logger.error(f"Error loading register_service.json: {e}")
+        return jsonify({"error": "Failed to load service registration"}), 500
 
 @app.route('/docs')
 def docs():
