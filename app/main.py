@@ -29,7 +29,8 @@ class NMEAHander:
         self.udp_socket = None
         self.is_streaming = False
         self.streamed_messages = 0
-        self.last_message = None  # Store the last received message
+        self.message_history = []  # Store recent message history
+        self.max_history = 100  # Maximum number of messages to keep in history
         self.state = {
             'port': None,
             'baud_rate': 4800,
@@ -131,11 +132,17 @@ class NMEAHander:
                         # Parse NMEA message
                         msg_type = data.split(',')[0][1:]  # Remove $ and get message type
                         self.nmea_messages.add(msg_type)
-                        # Store the last message
-                        self.last_message = {
+                        
+                        # Add message to history
+                        message = {
                             "raw": data,
-                            "type": msg_type
+                            "type": msg_type,
+                            "timestamp": datetime.datetime.now().isoformat()
                         }
+                        self.message_history.insert(0, message)  # Add to start of list
+                        if len(self.message_history) > self.max_history:
+                            self.message_history.pop()  # Remove oldest message
+                        
                         # Log the message
                         self.log_message(data)
                         # Stream the message if streaming is active and type is selected
@@ -281,7 +288,7 @@ class NMEAHander:
             
             # Reset state
             self.state['port'] = None
-            self.last_message = None
+            self.message_history = []  # Clear message history
             self.save_state()
             
             return True, "Disconnected from serial port"
@@ -290,19 +297,19 @@ class NMEAHander:
             return False, str(e)
 
     def read_serial(self):
-        """Read data from serial port - returns the last received message"""
+        """Read data from serial port - returns filtered message history"""
         if not self.serial_connection or not self.serial_connection.is_open:
             return {"status": "error", "message": "Not connected"}
         
-        if self.last_message:
-            return {
-                "status": "success",
-                "raw": self.last_message["raw"],
-                "type": self.last_message["type"],
-                "available_types": list(self.nmea_messages)
-            }
+        # Filter messages by selected types
+        filtered_messages = [
+            msg for msg in self.message_history
+            if not self.selected_message_types or msg["type"] in self.selected_message_types
+        ]
+        
         return {
             "status": "success",
+            "messages": filtered_messages,
             "available_types": list(self.nmea_messages)
         }
 

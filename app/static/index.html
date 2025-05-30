@@ -321,11 +321,8 @@
           try {
             const response = await axios.get('/api/read');
             if (response.data.status === 'success') {
-              if (response.data.raw) {  // Only add message if we have raw data
-                this.messages.unshift(response.data);
-                if (this.messages.length > 100) {
-                  this.messages.pop();
-                }
+              if (response.data.messages) {
+                this.messages = response.data.messages;
               }
               if (response.data.available_types) {
                 this.availableMessageTypes = response.data.available_types;
