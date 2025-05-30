@@ -19,8 +19,8 @@ class NMEAHander:
         self.logger = logging.getLogger(__name__)
         self.nmea_messages = set()
         self.selected_message_types = set()
-        self.log_path = Path('/app/logs/nmea_messages.log')
-        self.state_path = Path('/app/logs/state.json')
+        self.log_path = None
+        self.state_path = None
         self.udp_socket = None
         self.is_streaming = False
         self.streamed_messages = 0  # Add message counter
@@ -36,6 +36,7 @@ class NMEAHander:
         log_dir.mkdir(parents=True, exist_ok=True)
         
         # Set up file handler for NMEA messages
+        self.log_path = log_dir / 'nmea_messages.log'
         fh = logging.FileHandler(self.log_path, mode='a')
         fh.setLevel(logging.INFO)
         formatter = logging.Formatter('%(asctime)s - %(message)s')
@@ -49,6 +50,9 @@ class NMEAHander:
         app_fh.setFormatter(formatter)
         self.logger.addHandler(app_fh)
 
+        # State file path
+        self.state_path = log_dir / 'state.json'
+        
         # Load saved state
         self.load_state()
 
