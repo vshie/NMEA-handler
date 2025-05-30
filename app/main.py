@@ -9,6 +9,8 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 import datetime
+import threading
+import time
 
 app = Flask(__name__, static_folder='static')
 CORS(app)
@@ -26,13 +28,17 @@ class NMEAHander:
         self.state_path = None
         self.udp_socket = None
         self.is_streaming = False
-        self.streamed_messages = 0  # Add message counter
+        self.streamed_messages = 0
         self.state = {
             'port': None,
             'baud_rate': 4800,
             'is_streaming': False,
             'selected_message_types': []
         }
+        
+        # Thread control
+        self.reader_thread = None
+        self.should_stop = False
         
         # Configure logging
         log_dir = Path('/app/logs')
@@ -61,6 +67,19 @@ class NMEAHander:
         
         # Load saved state
         self.load_state()
+        
+        # Restore previous connection if it exists
+        if self.state['port']:
+            self.app_logger.info(f"Restoring previous connection to {self.state['port']} at {self.state['baud_rate']} baud")
+            success, message = self.connect_serial(self.state['port'], self.state['baud_rate'])
+            if success:
+                self.app_logger.info("Successfully restored previous connection")
+                # Restore streaming state if it was active
+                if self.state['is_streaming']:
+                    self.app_logger.info("Restoring previous streaming state")
+                    self.start_streaming()
+            else:
+                self.app_logger.error(f"Failed to restore previous connection: {message}")
 
     def load_state(self):
         """Load saved state from file"""
@@ -69,6 +88,8 @@ class NMEAHander:
                 with open(self.state_path, 'r') as f:
                     self.state = json.load(f)
                     self.selected_message_types = set(self.state.get('selected_message_types', []))
+                    self.is_streaming = self.state.get('is_streaming', False)
+                    self.app_logger.info(f"Loaded saved state: port={self.state['port']}, baud_rate={self.state['baud_rate']}, streaming={self.is_streaming}")
         except Exception as e:
             self.app_logger.error(f"Error loading state: {e}")
 
@@ -76,10 +97,47 @@ class NMEAHander:
         """Save current state to file"""
         try:
             self.state['selected_message_types'] = list(self.selected_message_types)
+            self.state['is_streaming'] = self.is_streaming
             with open(self.state_path, 'w') as f:
                 json.dump(self.state, f)
+            self.app_logger.info(f"Saved state: port={self.state['port']}, baud_rate={self.state['baud_rate']}, streaming={self.is_streaming}")
         except Exception as e:
             self.app_logger.error(f"Error saving state: {e}")
+
+    def start_reader_thread(self):
+        """Start the background thread for reading serial data"""
+        if self.reader_thread is None or not self.reader_thread.is_alive():
+            self.should_stop = False
+            self.reader_thread = threading.Thread(target=self._read_serial_loop)
+            self.reader_thread.daemon = True
+            self.reader_thread.start()
+            self.app_logger.info("Started background serial reader thread")
+
+    def stop_reader_thread(self):
+        """Stop the background thread"""
+        self.should_stop = True
+        if self.reader_thread and self.reader_thread.is_alive():
+            self.reader_thread.join(timeout=1.0)
+            self.app_logger.info("Stopped background serial reader thread")
+
+    def _read_serial_loop(self):
+        """Background thread function for reading serial data"""
+        while not self.should_stop:
+            if self.serial_connection and self.serial_connection.is_open:
+                try:
+                    data = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
+                    if data.startswith('$'):
+                        # Parse NMEA message
+                        msg_type = data.split(',')[0][1:]  # Remove $ and get message type
+                        self.nmea_messages.add(msg_type)
+                        # Log the message
+                        self.log_message(data)
+                        # Stream the message if streaming is active and type is selected
+                        if self.is_streaming and msg_type in self.selected_message_types:
+                            self.stream_message(data, msg_type)
+                except Exception as e:
+                    self.app_logger.error(f"Error in serial reader thread: {e}")
+            time.sleep(0.1)  # Small delay to prevent CPU overuse
 
     def start_streaming(self):
         """Start UDP streaming"""
@@ -193,6 +251,10 @@ class NMEAHander:
             self.state['port'] = port
             self.state['baud_rate'] = baud_rate
             self.save_state()
+            
+            # Start the reader thread
+            self.start_reader_thread()
+            
             return True, f"Connected to {port} at {baud_rate} baud"
         except Exception as e:
             return False, str(e)
@@ -200,6 +262,7 @@ class NMEAHander:
     def disconnect_serial(self):
         """Disconnect from serial port"""
         try:
+            self.stop_reader_thread()
             if self.serial_connection and self.serial_connection.is_open:
                 self.serial_connection.close()
             # Update state
@@ -210,30 +273,14 @@ class NMEAHander:
             return False, str(e)
 
     def read_serial(self):
-        """Read data from serial port"""
+        """Read data from serial port - now just returns the last message"""
         if not self.serial_connection or not self.serial_connection.is_open:
             return {"status": "error", "message": "Not connected"}
         
-        try:
-            data = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
-            if data.startswith('$'):
-                # Parse NMEA message
-                msg_type = data.split(',')[0][1:]  # Remove $ and get message type
-                self.nmea_messages.add(msg_type)
-                # Log the message
-                self.log_message(data)
-                # Stream the message if streaming is active and type is selected
-                if self.is_streaming and msg_type in self.selected_message_types:
-                    self.stream_message(data, msg_type)
-                return {
-                    "status": "success",
-                    "raw": data,
-                    "type": msg_type,
-                    "available_types": list(self.nmea_messages)
-                }
-            return {"status": "success", "raw": data}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
+        return {
+            "status": "success",
+            "available_types": list(self.nmea_messages)
+        }
 
     def log_message(self, message):
         """Log NMEA message"""
