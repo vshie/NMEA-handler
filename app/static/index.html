@@ -149,7 +149,7 @@
               </v-btn>
               <v-btn
                 color="error"
-                @click="deleteLogs"
+                @click="confirmDeleteLogs"
                 small
               >
                 Delete Logs
@@ -217,7 +217,8 @@
           streaming_to: null,
           selected_message_types: [],
           streamed_messages: 0
-        }
+        },
+        dialog: false
       },
       methods: {
         async fetchPorts() {
@@ -373,6 +374,11 @@
             await axios.post('/api/logs/delete');
           } catch (error) {
             console.error('Error deleting logs:', error);
+          }
+        },
+        confirmDeleteLogs() {
+          if (confirm('Are you sure you want to delete all logs? This action cannot be undone.')) {
+            this.deleteLogs();
           }
         },
         startPolling() {
