@@ -70,7 +70,6 @@ LABEL permissions='\
         }\
       ]\
     },\
-    "NetworkMode": "host",\
     "Privileged": true\
   }\
 }'
