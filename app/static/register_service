@@ -1,6 +1,6 @@
 {
     "name":"NMEA Handler",
-    "description":"Example Extension",
+    "description":"Route nmea data",
     "icon":"mdi-enterprise",
     "company":"Blue Robotics",
     "version":"0.0.1",
