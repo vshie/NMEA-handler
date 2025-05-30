@@ -339,7 +339,7 @@ def register_service():
     return jsonify({
         "name": "NMEA Handler",
         "description": "Route nmea data",
-        "icon": "mdi-enterprise",
+        "icon": "mdi-briefcase-minus-outline",
         "company": "Blue Robotics",
         "version": "0.0.1",
         "webpage": "https://github.com/vshie/NMEA-handler",
