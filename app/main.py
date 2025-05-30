@@ -16,7 +16,10 @@ CORS(app)
 class NMEAHander:
     def __init__(self):
         self.serial_connection = None
-        self.logger = logging.getLogger(__name__)
+        # Create two separate loggers
+        self.nmea_logger = logging.getLogger('nmea')
+        self.app_logger = logging.getLogger('app')
+        
         self.nmea_messages = set()
         self.selected_message_types = set()
         self.log_path = None
@@ -37,18 +40,21 @@ class NMEAHander:
         
         # Set up file handler for NMEA messages
         self.log_path = log_dir / 'nmea_messages.log'
-        fh = logging.FileHandler(self.log_path, mode='a')
-        fh.setLevel(logging.INFO)
-        formatter = logging.Formatter('%(asctime)s - %(message)s')
-        fh.setFormatter(formatter)
-        self.logger.addHandler(fh)
+        nmea_fh = logging.FileHandler(self.log_path, mode='a')
+        nmea_fh.setLevel(logging.INFO)
+        nmea_formatter = logging.Formatter('%(asctime)s - %(message)s')
+        nmea_fh.setFormatter(nmea_formatter)
+        self.nmea_logger.addHandler(nmea_fh)
+        self.nmea_logger.setLevel(logging.INFO)
         
         # Set up file handler for application logs
         app_log_path = log_dir / 'nmea_handler.log'
         app_fh = logging.FileHandler(app_log_path, mode='a')
         app_fh.setLevel(logging.INFO)
-        app_fh.setFormatter(formatter)
-        self.logger.addHandler(app_fh)
+        app_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        app_fh.setFormatter(app_formatter)
+        self.app_logger.addHandler(app_fh)
+        self.app_logger.setLevel(logging.INFO)
 
         # State file path
         self.state_path = log_dir / 'state.json'
@@ -64,7 +70,7 @@ class NMEAHander:
                     self.state = json.load(f)
                     self.selected_message_types = set(self.state.get('selected_message_types', []))
         except Exception as e:
-            self.logger.error(f"Error loading state: {e}")
+            self.app_logger.error(f"Error loading state: {e}")
 
     def save_state(self):
         """Save current state to file"""
@@ -73,7 +79,7 @@ class NMEAHander:
             with open(self.state_path, 'w') as f:
                 json.dump(self.state, f)
         except Exception as e:
-            self.logger.error(f"Error saving state: {e}")
+            self.app_logger.error(f"Error saving state: {e}")
 
     def start_streaming(self):
         """Start UDP streaming"""
@@ -84,11 +90,11 @@ class NMEAHander:
             self.streamed_messages = 0  # Reset counter
             self.state['is_streaming'] = True
             self.save_state()
-            self.logger.info(f"UDP streaming started to host.docker.internal:27000")
-            self.logger.info(f"Streaming selected message types: {', '.join(sorted(self.selected_message_types))}")
+            self.app_logger.info(f"UDP streaming started to host.docker.internal:27000")
+            self.app_logger.info(f"Streaming selected message types: {', '.join(sorted(self.selected_message_types))}")
             return True, "Streaming started"
         except Exception as e:
-            self.logger.error(f"Error starting UDP stream: {e}")
+            self.app_logger.error(f"Error starting UDP stream: {e}")
             return False, str(e)
 
     def stop_streaming(self):
@@ -100,10 +106,10 @@ class NMEAHander:
             self.is_streaming = False
             self.state['is_streaming'] = False
             self.save_state()
-            self.logger.info("UDP streaming stopped")
+            self.app_logger.info("UDP streaming stopped")
             return True, "Streaming stopped"
         except Exception as e:
-            self.logger.error(f"Error stopping UDP stream: {e}")
+            self.app_logger.error(f"Error stopping UDP stream: {e}")
             return False, str(e)
 
     def update_selected_message_types(self, message_types):
@@ -111,37 +117,37 @@ class NMEAHander:
         old_types = self.selected_message_types
         self.selected_message_types = set(message_types)
         self.save_state()
-        self.logger.info(f"Updated streaming message types: {', '.join(sorted(self.selected_message_types))}")
+        self.app_logger.info(f"Updated streaming message types: {', '.join(sorted(self.selected_message_types))}")
         if self.is_streaming:
-            self.logger.info(f"Streaming active with types: {', '.join(sorted(self.selected_message_types))}")
+            self.app_logger.info(f"Streaming active with types: {', '.join(sorted(self.selected_message_types))}")
 
     def stream_message(self, message, msg_type):
         """Stream message via UDP if type is selected"""
         if self.is_streaming and msg_type in self.selected_message_types:
-            self.logger.info(f"Attempting to stream message type: {msg_type}")
+            self.app_logger.info(f"Attempting to stream message type: {msg_type}")
             try:
                 # Check if socket is still valid
                 if not self.udp_socket:
-                    self.logger.info("Creating new UDP socket")
+                    self.app_logger.info("Creating new UDP socket")
                     self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 
                 # Send raw NMEA message with newline
                 encoded_message = (message + '\n').encode()
-                self.logger.info(f"Sending UDP packet to host.docker.internal:27000 - Length: {len(encoded_message)} bytes")
+                self.app_logger.info(f"Sending UDP packet to host.docker.internal:27000 - Length: {len(encoded_message)} bytes")
                 self.udp_socket.sendto(encoded_message, ('host.docker.internal', 27000))
                 self.streamed_messages += 1
-                self.logger.info(f"Successfully streamed message #{self.streamed_messages}: {msg_type} - {message}")
+                self.app_logger.info(f"Successfully streamed message #{self.streamed_messages}: {msg_type} - {message}")
             except Exception as e:
-                self.logger.error(f"Error streaming message: {e}")
+                self.app_logger.error(f"Error streaming message: {e}")
                 # Try to recreate socket on error
                 try:
                     if self.udp_socket:
-                        self.logger.info("Closing existing UDP socket due to error")
+                        self.app_logger.info("Closing existing UDP socket due to error")
                         self.udp_socket.close()
-                    self.logger.info("Creating new UDP socket after error")
+                    self.app_logger.info("Creating new UDP socket after error")
                     self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 except Exception as socket_error:
-                    self.logger.error(f"Failed to recreate socket: {socket_error}")
+                    self.app_logger.error(f"Failed to recreate socket: {socket_error}")
 
     def get_ports(self):
         """Get list of available serial ports"""
@@ -164,7 +170,7 @@ class NMEAHander:
                 if port.device not in ports:
                     ports.append(port.device)
         except Exception as e:
-            self.logger.error(f"Error listing ports: {e}")
+            self.app_logger.error(f"Error listing ports: {e}")
         
         return ports
 
@@ -241,8 +247,11 @@ class NMEAHander:
             with open(self.log_path, 'a') as f:
                 f.write(f"{timestamp} - {message}\n")
             
+            # Also log to NMEA logger
+            self.nmea_logger.info(message)
             return True, "Message logged"
         except Exception as e:
+            self.app_logger.error(f"Error logging NMEA message: {e}")
             return False, str(e)
 
 # Create NMEA handler instance
