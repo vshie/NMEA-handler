@@ -125,8 +125,17 @@
                     <v-btn
                       :color="isStreaming ? 'error' : 'primary'"
                       @click="toggleStreaming"
+                      class="mr-2"
                     >
                       {{ isStreaming ? 'Stop Stream' : 'Start Stream' }}
+                    </v-btn>
+                    <v-btn
+                      color="primary"
+                      @click="changeBaudRate"
+                      :disabled="!canChangeBaudRate"
+                      class="mr-2"
+                    >
+                      Change Baud Rate
                     </v-btn>
                   </template>
                 </v-col>
@@ -207,7 +216,7 @@
         availablePorts: [],
         selectedPort: null,
         serialPortInfo: { serial_port: 'Not connected', baud_rate: 0 },
-        baudRates: [4800, 9600, 19200, 38400, 57600, 115200],
+        baudRates: [4800, 38400],  // Updated to only show valid baud rates
         selectedBaudRate: 4800,
         availableMessageTypes: [],
         selectedMessageTypes: [],
@@ -219,6 +228,12 @@
           streamed_messages: 0
         },
         dialog: false
+      },
+      computed: {
+        canChangeBaudRate() {
+          return this.serialPortInfo.serial_port !== 'Not connected' && 
+                 this.serialPortInfo.baud_rate !== this.selectedBaudRate;
+        }
       },
       methods: {
         async fetchPorts() {
@@ -400,6 +415,27 @@
           }).catch(error => {
             console.error('Error updating message types:', error);
           });
+        },
+        async changeBaudRate() {
+          if (!this.canChangeBaudRate) return;
+          
+          if (confirm(`Are you sure you want to change the baud rate to ${this.selectedBaudRate}?`)) {
+            try {
+              const response = await axios.post('/api/serial/change_baud', {
+                baud_rate: this.selectedBaudRate
+              });
+              
+              if (response.data.success) {
+                // Update the UI to reflect the new baud rate
+                this.serialPortInfo.baud_rate = this.selectedBaudRate;
+              } else {
+                alert(response.data.message);
+              }
+            } catch (error) {
+              console.error('Error changing baud rate:', error);
+              alert('Failed to change baud rate. Please try again.');
+            }
+          }
         }
       },
       mounted() {

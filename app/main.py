@@ -332,6 +332,54 @@ class NMEAHander:
             self.app_logger.error(f"Error logging NMEA message: {e}")
             return False, str(e)
 
+    def change_baud_rate(self, new_baud_rate):
+        """Change the baud rate of the weather station"""
+        try:
+            if not self.serial_connection or not self.serial_connection.is_open:
+                return False, "Not connected to serial port"
+
+            current_baud = self.serial_connection.baudrate
+            if current_baud == new_baud_rate:
+                return False, f"Already at {new_baud_rate} baud"
+
+            # Step 1: Disable periodic sentences
+            self.app_logger.info("Disabling periodic sentences")
+            self.serial_connection.write(b'$PAMTX\r\n')
+            time.sleep(0.5)  # Wait for command to be processed
+
+            # Step 2: Send baud rate change command
+            self.app_logger.info(f"Sending baud rate change command to {new_baud_rate}")
+            baud_cmd = f'$PAMTC,BAUD,{new_baud_rate}\r\n'.encode()
+            self.serial_connection.write(baud_cmd)
+            time.sleep(1)  # Wait for any queued messages
+
+            # Step 3: Close current connection
+            self.app_logger.info("Closing current connection")
+            self.serial_connection.close()
+            time.sleep(0.5)  # Wait for port to fully close
+
+            # Step 4: Reopen at new baud rate
+            self.app_logger.info(f"Reopening connection at {new_baud_rate} baud")
+            self.serial_connection = serial.Serial(
+                port=self.state['port'],
+                baudrate=new_baud_rate,
+                timeout=1
+            )
+            time.sleep(0.5)  # Wait for connection to stabilize
+
+            # Step 5: Re-enable periodic sentences
+            self.app_logger.info("Re-enabling periodic sentences")
+            self.serial_connection.write(b'$PAMTX,1\r\n')
+
+            # Update state
+            self.state['baud_rate'] = new_baud_rate
+            self.save_state()
+
+            return True, f"Successfully changed baud rate to {new_baud_rate}"
+        except Exception as e:
+            self.app_logger.error(f"Error changing baud rate: {e}")
+            return False, str(e)
+
 # Create NMEA handler instance
 nmea_handler = NMEAHander()
 
@@ -482,6 +530,20 @@ def update_message_types():
     
     nmea_handler.update_selected_message_types(data['message_types'])
     return jsonify({"success": True, "message": "Message types updated"})
+
+@app.route('/api/serial/change_baud', methods=['POST'])
+def change_baud():
+    """Change the baud rate of the weather station"""
+    data = request.get_json()
+    if not data or 'baud_rate' not in data:
+        return jsonify({"success": False, "message": "No baud rate specified"})
+    
+    baud_rate = data['baud_rate']
+    if baud_rate not in [4800, 38400]:
+        return jsonify({"success": False, "message": "Invalid baud rate. Must be 4800 or 38400"})
+    
+    success, message = nmea_handler.change_baud_rate(baud_rate)
+    return jsonify({"success": success, "message": message})
 
 if __name__ == '__main__':
     from waitress import serve
