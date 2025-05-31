@@ -231,8 +231,9 @@
       },
       computed: {
         canChangeBaudRate() {
+          // Only enable if connected at 4800 baud
           return this.serialPortInfo.serial_port !== 'Not connected' && 
-                 this.serialPortInfo.baud_rate !== this.selectedBaudRate;
+                 this.serialPortInfo.baud_rate === 4800;
         }
       },
       methods: {
@@ -325,6 +326,10 @@
           try {
             const response = await axios.get('/api/serial');
             this.serialPortInfo = response.data;
+            // Update selected baud rate to match current connection
+            if (this.serialPortInfo.serial_port !== 'Not connected') {
+              this.selectedBaudRate = this.serialPortInfo.baud_rate;
+            }
             // If we're not connected but the backend says we are, update our state
             if (this.serialPortInfo.serial_port !== 'Not connected' && !this.pollingInterval) {
               this.startPolling();
@@ -419,15 +424,16 @@
         async changeBaudRate() {
           if (!this.canChangeBaudRate) return;
           
-          if (confirm(`Are you sure you want to change the baud rate to ${this.selectedBaudRate}?`)) {
+          if (confirm('Are you sure you want to change the baud rate from 4800 to 38400?')) {
             try {
               const response = await axios.post('/api/serial/change_baud', {
-                baud_rate: this.selectedBaudRate
+                baud_rate: 38400  // Always change to 38400
               });
               
               if (response.data.success) {
                 // Update the UI to reflect the new baud rate
-                this.serialPortInfo.baud_rate = this.selectedBaudRate;
+                this.serialPortInfo.baud_rate = 38400;
+                this.selectedBaudRate = 38400;
               } else {
                 alert(response.data.message);
               }
