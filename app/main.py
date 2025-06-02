@@ -255,21 +255,61 @@ class NMEAHander:
             if not Path(port).exists():
                 return False, f"Port {port} does not exist"
             
+            # Always start at 4800 baud
+            initial_baud = 4800
+            self.app_logger.info(f"Connecting to {port} at {initial_baud} baud for initial communication")
+            
             self.serial_connection = serial.Serial(
                 port=port,
-                baudrate=baud_rate,
+                baudrate=initial_baud,
                 timeout=1
             )
-            # Save state
-            self.state['port'] = port
-            self.state['baud_rate'] = baud_rate
-            self.save_state()
             
             # Start the reader thread
             self.start_reader_thread()
             
-            return True, f"Connected to {port} at {baud_rate} baud"
+            # Wait for valid NMEA messages
+            valid_messages = ['GPZDA', 'WIMWV', 'GPGGA', 'YXXDR', 'WIMWD']
+            received_messages = set()
+            start_time = time.time()
+            timeout = 10  # 10 seconds timeout
+            
+            self.app_logger.info("Waiting for valid NMEA messages...")
+            while time.time() - start_time < timeout:
+                if self.serial_connection and self.serial_connection.is_open:
+                    try:
+                        data = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
+                        if data.startswith('$'):
+                            msg_type = data.split(',')[0][1:]  # Remove $ and get message type
+                            if msg_type in valid_messages:
+                                received_messages.add(msg_type)
+                                self.app_logger.info(f"Received valid message type: {msg_type}")
+                                if len(received_messages) >= 1:  # We only need one valid message
+                                    break
+                    except Exception as e:
+                        self.app_logger.error(f"Error reading during verification: {e}")
+                time.sleep(0.1)
+            
+            if len(received_messages) >= 1:
+                self.app_logger.info("Received valid NMEA message, proceeding with baud rate change to 38400")
+                # Change to 38400 baud
+                success, message = self.change_baud_rate(38400)
+                if success:
+                    self.app_logger.info("Successfully changed to 38400 baud")
+                    # Save state
+                    self.state['port'] = port
+                    self.state['baud_rate'] = 38400
+                    self.save_state()
+                    return True, f"Connected to {port} at 38400 baud"
+                else:
+                    self.app_logger.error(f"Failed to change baud rate: {message}")
+                    return False, message
+            else:
+                self.app_logger.error("Timeout waiting for valid NMEA messages")
+                return False, "No valid NMEA messages received within timeout period"
+            
         except Exception as e:
+            self.app_logger.error(f"Error in connect_serial: {e}")
             return False, str(e)
 
     def disconnect_serial(self):
