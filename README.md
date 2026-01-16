@@ -38,6 +38,11 @@ Log files are stored in the BlueOS extensions directory and can be accessed thro
 
 These logs persist across container restarts and can be accessed directly from the BlueOS file system.
 
+## Deployment
+
+The extension is deployed by building the Docker image on Docker Hub, then
+pulling it into BlueOS and running it onboard a Raspberry Pi.
+
 ## Development
 
 ### Building from Source

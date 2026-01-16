@@ -15,7 +15,7 @@ import time
 app = Flask(__name__, static_folder='static')
 CORS(app)
 
-class NMEAHander:
+class NMEAHandler:
     def __init__(self):
         self.serial_connection = None
         # Create two separate loggers
@@ -161,7 +161,10 @@ class NMEAHander:
             self.streamed_messages = 0  # Reset counter
             self.state['is_streaming'] = True
             self.save_state()
-            self.app_logger.info(f"UDP streaming started to 192.168.2.2:27000")
+        self.app_logger.info(
+            "UDP streaming started to host.docker.internal:27000 "
+            "(typical device IP: 192.168.2.2)"
+        )
             self.app_logger.info(f"Streaming selected message types: {', '.join(sorted(self.selected_message_types))}")
             return True, "Streaming started"
         except Exception as e:
@@ -421,7 +424,7 @@ class NMEAHander:
             return False, str(e)
 
 # Create NMEA handler instance
-nmea_handler = NMEAHander()
+nmea_handler = NMEAHandler()
 
 @app.route('/')
 def index():
