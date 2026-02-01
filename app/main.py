@@ -16,6 +16,25 @@ app = Flask(__name__, static_folder='static')
 CORS(app)
 
 class NMEAHandler:
+    # Required NMEA sentences for dashboard display
+    # These will be enabled after connecting at 38400 baud
+    REQUIRED_SENTENCES = {
+        'MWVT': {'interval': 10, 'description': 'True wind (vessel-relative)'},
+        'MWD':  {'interval': 10, 'description': 'True wind (north-relative)'},
+        'HDT':  {'interval': 10, 'description': 'True heading'},
+        'ROT':  {'interval': 10, 'description': 'Rate of turn'},
+        'ZDA':  {'interval': 10, 'description': 'Time and date'},
+    }
+    
+    # Connection status phases
+    CONN_STATUS_DISCONNECTED = 'disconnected'
+    CONN_STATUS_TRYING_4800 = 'trying_4800'
+    CONN_STATUS_TRYING_38400 = 'trying_38400'
+    CONN_STATUS_SWITCHING_BAUD = 'switching_baud'
+    CONN_STATUS_ENABLING_SENTENCES = 'enabling_sentences'
+    CONN_STATUS_CONNECTED = 'connected'
+    CONN_STATUS_FAILED = 'failed'
+    
     def __init__(self):
         self.serial_connection = None
         # Create two separate loggers
@@ -31,6 +50,12 @@ class NMEAHandler:
         self.streamed_messages = 0
         self.message_history = []  # Store recent message history
         self.max_history = 100  # Maximum number of messages to keep in history
+        
+        # Connection status tracking
+        self.connection_status = self.CONN_STATUS_DISCONNECTED
+        self.connection_message = ''
+        self.detected_baud = None  # Baud rate at which device was initially detected
+        
         self.state = {
             'port': None,
             'baud_rate': 4800,
@@ -160,7 +185,7 @@ class NMEAHandler:
             self.is_streaming = True
             self.streamed_messages = 0  # Reset counter
             self.state['is_streaming'] = True
-        self.save_state()
+            self.save_state()
             self.app_logger.info(
                 "UDP streaming started to host.docker.internal:27000 "
                 "(typical device IP: 192.168.2.2)"
@@ -248,72 +273,210 @@ class NMEAHandler:
         
         return ports
 
-    def connect_serial(self, port, baud_rate):
-        """Connect to serial port with specified settings"""
+    def _try_baud_rate(self, port, baud_rate, timeout=3):
+        """
+        Try to connect at a specific baud rate and wait for valid NMEA data.
+        Returns (success, serial_connection or None)
+        """
         try:
-            if self.serial_connection and self.serial_connection.is_open:
-                self.serial_connection.close()
-            
-            # Verify port exists before attempting connection
-            if not Path(port).exists():
-                return False, f"Port {port} does not exist"
-            
-            # Always start at 4800 baud
-            initial_baud = 4800
-            self.app_logger.info(f"Connecting to {port} at {initial_baud} baud for initial communication")
-            
-            self.serial_connection = serial.Serial(
+            self.app_logger.info(f"Trying {port} at {baud_rate} baud...")
+            conn = serial.Serial(
                 port=port,
-                baudrate=initial_baud,
+                baudrate=baud_rate,
                 timeout=1
             )
             
-            # Start the reader thread
-            self.start_reader_thread()
-            
-            # Wait for valid NMEA messages
-            valid_messages = ['GPZDA', 'WIMWV', 'GPGGA', 'YXXDR', 'WIMWD']
-            received_messages = set()
             start_time = time.time()
-            timeout = 10  # 10 seconds timeout
-            
-            self.app_logger.info("Waiting for valid NMEA messages...")
             while time.time() - start_time < timeout:
-                if self.serial_connection and self.serial_connection.is_open:
-                    try:
-                        data = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
-                        if data.startswith('$'):
-                            msg_type = data.split(',')[0][1:]  # Remove $ and get message type
-                            if msg_type in valid_messages:
-                                received_messages.add(msg_type)
-                                self.app_logger.info(f"Received valid message type: {msg_type}")
-                                if len(received_messages) >= 1:  # We only need one valid message
-                                    break
-                    except Exception as e:
-                        self.app_logger.error(f"Error reading during verification: {e}")
+                try:
+                    data = conn.readline().decode('utf-8', errors='ignore').strip()
+                    if data.startswith('$'):
+                        # Valid NMEA sentence received
+                        msg_type = data.split(',')[0][1:]
+                        self.app_logger.info(f"Received valid NMEA at {baud_rate} baud: {msg_type}")
+                        return True, conn
+                except Exception as e:
+                    self.app_logger.error(f"Error reading at {baud_rate} baud: {e}")
                 time.sleep(0.1)
             
-            if len(received_messages) >= 1:
-                self.app_logger.info("Received valid NMEA message, proceeding with baud rate change to 38400")
-                # Change to 38400 baud
-                success, message = self.change_baud_rate(38400)
-                if success:
-                    self.app_logger.info("Successfully changed to 38400 baud")
-                    # Save state
-                    self.state['port'] = port
-                    self.state['baud_rate'] = 38400
-                    self.save_state()
-                    return True, f"Connected to {port} at 38400 baud"
-                else:
-                    self.app_logger.error(f"Failed to change baud rate: {message}")
-                    return False, message
-            else:
-                self.app_logger.error("Timeout waiting for valid NMEA messages")
-                return False, "No valid NMEA messages received within timeout period"
+            # No valid data received, close connection
+            conn.close()
+            return False, None
             
         except Exception as e:
-            self.app_logger.error(f"Error in connect_serial: {e}")
+            self.app_logger.error(f"Failed to open port at {baud_rate} baud: {e}")
+            return False, None
+
+    def _switch_to_38400(self, port):
+        """
+        Switch the device from 4800 to 38400 baud.
+        Assumes we're currently connected at 4800 baud.
+        Returns (success, message)
+        """
+        try:
+            self.connection_status = self.CONN_STATUS_SWITCHING_BAUD
+            self.connection_message = 'Switching to 38400 baud...'
+            
+            # Step 1: Disable periodic sentences
+            self.app_logger.info("Disabling periodic sentences before baud change")
+            self.serial_connection.write(b'$PAMTX\r\n')
+            time.sleep(0.5)
+            
+            # Step 2: Send baud rate change command
+            self.app_logger.info("Sending baud rate change command to 38400")
+            self.serial_connection.write(b'$PAMTC,BAUD,38400\r\n')
+            time.sleep(1)
+            
+            # Step 3: Close current connection
+            self.serial_connection.close()
+            time.sleep(0.5)
+            
+            # Step 4: Reopen at 38400 baud
+            self.app_logger.info("Reopening connection at 38400 baud")
+            self.serial_connection = serial.Serial(
+                port=port,
+                baudrate=38400,
+                timeout=1
+            )
+            time.sleep(0.5)
+            
+            # Step 5: Re-enable periodic sentences
+            self.app_logger.info("Re-enabling periodic sentences")
+            self.serial_connection.write(b'$PAMTX,1\r\n')
+            time.sleep(0.3)
+            
+            # Verify we're receiving data at 38400
+            start_time = time.time()
+            while time.time() - start_time < 3:
+                data = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
+                if data.startswith('$'):
+                    self.app_logger.info(f"Confirmed communication at 38400 baud")
+                    return True, "Switched to 38400 baud"
+                time.sleep(0.1)
+            
+            return False, "No response after baud rate switch"
+            
+        except Exception as e:
+            self.app_logger.error(f"Error switching baud rate: {e}")
             return False, str(e)
+
+    def enable_required_sentences(self):
+        """
+        Enable the NMEA sentences required for dashboard display.
+        Should only be called when connected at 38400 baud.
+        Returns (success, message)
+        """
+        try:
+            self.connection_status = self.CONN_STATUS_ENABLING_SENTENCES
+            self.connection_message = 'Enabling required NMEA sentences...'
+            
+            if not self.serial_connection or not self.serial_connection.is_open:
+                return False, "Not connected"
+            
+            enabled_count = 0
+            for sentence_id, config in self.REQUIRED_SENTENCES.items():
+                # Format: $PAMTC,EN,<id>,<enable>,<interval>
+                # interval is in tenths of a second (10 = 1 second)
+                cmd = f'$PAMTC,EN,{sentence_id},1,{config["interval"]}\r\n'
+                self.app_logger.info(f"Enabling sentence {sentence_id}: {config['description']}")
+                self.serial_connection.write(cmd.encode())
+                time.sleep(0.2)  # Small delay between commands
+                enabled_count += 1
+            
+            self.app_logger.info(f"Enabled {enabled_count} required NMEA sentences")
+            return True, f"Enabled {enabled_count} sentences"
+            
+        except Exception as e:
+            self.app_logger.error(f"Error enabling sentences: {e}")
+            return False, str(e)
+
+    def connect_serial(self, port, baud_rate=None):
+        """
+        Connect to serial port with automatic baud rate negotiation.
+        
+        Connection sequence:
+        1. Try 4800 baud - if successful, switch to 38400 baud
+        2. If 4800 fails, try 38400 baud (device may already be configured)
+        3. Toggle between baud rates until successful or max retries
+        4. Once at 38400 baud, enable required sentences
+        """
+        try:
+            # Clean up any existing connection
+            if self.serial_connection and self.serial_connection.is_open:
+                self.stop_reader_thread()
+                self.serial_connection.close()
+                self.serial_connection = None
+            
+            # Verify port exists
+            if not Path(port).exists():
+                self.connection_status = self.CONN_STATUS_FAILED
+                self.connection_message = f"Port {port} does not exist"
+                return False, self.connection_message
+            
+            self.detected_baud = None
+            max_attempts = 6  # 3 attempts at each baud rate
+            baud_rates = [4800, 38400]
+            
+            # Try to establish connection
+            for attempt in range(max_attempts):
+                current_baud = baud_rates[attempt % 2]
+                
+                if current_baud == 4800:
+                    self.connection_status = self.CONN_STATUS_TRYING_4800
+                    self.connection_message = f'Trying {current_baud} baud (attempt {attempt // 2 + 1}/3)...'
+                else:
+                    self.connection_status = self.CONN_STATUS_TRYING_38400
+                    self.connection_message = f'Trying {current_baud} baud (attempt {attempt // 2 + 1}/3)...'
+                
+                self.app_logger.info(self.connection_message)
+                
+                success, conn = self._try_baud_rate(port, current_baud, timeout=3)
+                
+                if success:
+                    self.serial_connection = conn
+                    self.detected_baud = current_baud
+                    self.state['port'] = port
+                    
+                    if current_baud == 4800:
+                        # Connected at 4800, need to switch to 38400
+                        self.app_logger.info("Connected at 4800 baud, switching to 38400...")
+                        success, msg = self._switch_to_38400(port)
+                        if not success:
+                            self.connection_status = self.CONN_STATUS_FAILED
+                            self.connection_message = f"Failed to switch baud rate: {msg}"
+                            return False, self.connection_message
+                    
+                    # Now at 38400 baud - enable required sentences
+                    success, msg = self.enable_required_sentences()
+                    if not success:
+                        self.app_logger.warning(f"Failed to enable sentences: {msg}")
+                        # Continue anyway - sentences may already be enabled
+                    
+                    # Start the reader thread
+                    self.start_reader_thread()
+                    
+                    # Update state
+                    self.state['baud_rate'] = 38400
+                    self.save_state()
+                    
+                    self.connection_status = self.CONN_STATUS_CONNECTED
+                    detected_msg = f" (detected at {self.detected_baud})" if self.detected_baud == 38400 else " (switched from 4800)"
+                    self.connection_message = f"Connected to {port} at 38400 baud{detected_msg}"
+                    self.app_logger.info(self.connection_message)
+                    
+                    return True, self.connection_message
+            
+            # All attempts failed
+            self.connection_status = self.CONN_STATUS_FAILED
+            self.connection_message = "Could not establish connection after multiple attempts"
+            self.app_logger.error(self.connection_message)
+            return False, self.connection_message
+            
+        except Exception as e:
+            self.connection_status = self.CONN_STATUS_FAILED
+            self.connection_message = str(e)
+            self.app_logger.error(f"Error in connect_serial: {e}")
+            return False, self.connection_message
 
     def disconnect_serial(self):
         """Disconnect from serial port"""
@@ -329,15 +492,36 @@ class NMEAHandler:
             if self.serial_connection and self.serial_connection.is_open:
                 self.serial_connection.close()
             
+            self.serial_connection = None
+            
             # Reset state
             self.state['port'] = None
             self.message_history = []  # Clear message history
+            self.nmea_messages = set()  # Clear detected message types
+            self.detected_baud = None
+            self.connection_status = self.CONN_STATUS_DISCONNECTED
+            self.connection_message = ''
             self.save_state()
             
             return True, "Disconnected from serial port"
         except Exception as e:
             self.app_logger.error(f"Error disconnecting: {e}")
             return False, str(e)
+    
+    def get_connection_info(self):
+        """Get detailed connection information"""
+        is_connected = (self.serial_connection is not None and 
+                       self.serial_connection.is_open)
+        
+        return {
+            'connected': is_connected,
+            'status': self.connection_status,
+            'message': self.connection_message,
+            'port': self.serial_connection.port if is_connected else None,
+            'baud_rate': self.serial_connection.baudrate if is_connected else 0,
+            'detected_baud': self.detected_baud,
+            'required_sentences': list(self.REQUIRED_SENTENCES.keys()),
+        }
 
     def read_serial(self):
         """Read data from serial port - returns filtered message history"""
@@ -501,9 +685,15 @@ def get_serial_info():
     if nmea_handler.serial_connection and nmea_handler.serial_connection.is_open:
         return jsonify({
             "serial_port": nmea_handler.serial_connection.port,
-            "baud_rate": nmea_handler.serial_connection.baudrate
+            "baud_rate": nmea_handler.serial_connection.baudrate,
+            "detected_baud": nmea_handler.detected_baud
         })
-    return jsonify({"serial_port": "Not connected", "baud_rate": 0})
+    return jsonify({"serial_port": "Not connected", "baud_rate": 0, "detected_baud": None})
+
+@app.route('/api/connection/status', methods=['GET'])
+def get_connection_status():
+    """Get detailed connection status information"""
+    return jsonify(nmea_handler.get_connection_info())
 
 @app.route('/api/read', methods=['GET'])
 def read_serial():

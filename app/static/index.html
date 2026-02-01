@@ -115,7 +115,7 @@
         <v-container>
           <!-- Connection Settings -->
           <v-card class="mb-4">
-            <v-card-title>Connection Settings</v-card-title>
+            <v-card-title>WX200 Weather Station Connection</v-card-title>
             <v-card-text>
               <v-row>
                 <v-col cols="12" sm="6">
@@ -125,39 +125,90 @@
                     label="Serial Port"
                     outlined
                     dense
+                    :disabled="isConnecting || connectionInfo.connected"
                   ></v-select>
                 </v-col>
                 <v-col cols="12" sm="6">
-                  <v-select
-                    v-model="selectedBaudRate"
-                    :items="baudRates"
-                    label="Baud Rate"
-                    outlined
-                    dense
-                  ></v-select>
+                  <v-btn
+                    icon
+                    @click="fetchPorts"
+                    :disabled="isConnecting || connectionInfo.connected"
+                    title="Refresh ports"
+                  >
+                    <v-icon>mdi-refresh</v-icon>
+                  </v-btn>
                 </v-col>
               </v-row>
+              
+              <!-- Connection Status -->
               <v-row>
                 <v-col cols="12">
+                  <!-- Connecting Progress -->
                   <v-alert
-                    v-if="serialPortInfo.serial_port !== 'Not connected'"
+                    v-if="isConnecting"
+                    type="info"
+                    dense
+                    class="connection-status"
+                  >
+                    <div class="d-flex align-center">
+                      <v-progress-circular
+                        indeterminate
+                        size="20"
+                        width="2"
+                        class="mr-3"
+                      ></v-progress-circular>
+                      <div>
+                        <strong>{{ connectionStatusText }}</strong>
+                        <div class="text-caption">{{ connectionInfo.message }}</div>
+                      </div>
+                    </div>
+                  </v-alert>
+                  
+                  <!-- Connected Status -->
+                  <v-alert
+                    v-else-if="connectionInfo.connected"
                     type="success"
                     dense
                     class="connection-status"
                   >
                     <div class="d-flex align-center">
-                      <v-icon class="mr-2">mdi-serial-port</v-icon>
+                      <v-icon class="mr-2">mdi-check-circle</v-icon>
                       <div>
-                        <strong>Connected to {{ serialPortInfo.serial_port }}</strong>
-                        <div>Baud Rate: {{ serialPortInfo.baud_rate }} baud</div>
+                        <strong>Connected to {{ connectionInfo.port }}</strong>
+                        <div>Operating at {{ connectionInfo.baud_rate }} baud
+                          <span v-if="connectionInfo.detected_baud && connectionInfo.detected_baud !== connectionInfo.baud_rate">
+                            (detected at {{ connectionInfo.detected_baud }}, switched)
+                          </span>
+                          <span v-else-if="connectionInfo.detected_baud === connectionInfo.baud_rate">
+                            (device already configured)
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </v-alert>
+                  
+                  <!-- Connection Failed -->
+                  <v-alert
+                    v-else-if="connectionInfo.status === 'failed'"
+                    type="error"
+                    dense
+                    class="connection-status"
+                  >
+                    <div class="d-flex align-center">
+                      <v-icon class="mr-2">mdi-alert-circle</v-icon>
+                      <div>
+                        <strong>Connection Failed</strong>
+                        <div>{{ connectionInfo.message }}</div>
+                      </div>
+                    </div>
+                  </v-alert>
+                  
+                  <!-- Streaming Status -->
                   <v-alert
                     v-if="isStreaming"
                     type="info"
                     dense
-                    class="connection-status"
+                    class="connection-status mt-2"
                   >
                     <div class="d-flex align-center">
                       <v-icon class="mr-2">mdi-broadcast</v-icon>
@@ -165,32 +216,49 @@
                         <strong>Streaming Active</strong>
                         <div>Destination: {{ streamingStatus.streaming_to }}</div>
                         <div>Messages sent: {{ streamingStatus.streamed_messages }}</div>
-                        <div>Active message types: {{ streamingStatus.selected_message_types.join(', ') }}</div>
+                        <div>Active types: {{ streamingStatus.selected_message_types.join(', ') || 'None selected' }}</div>
                       </div>
                     </div>
                   </v-alert>
+                </v-col>
+              </v-row>
+              
+              <!-- Action Buttons -->
+              <v-row>
+                <v-col cols="12">
                   <v-btn
-                    v-if="serialPortInfo.serial_port === 'Not connected'"
+                    v-if="!connectionInfo.connected && !isConnecting"
                     color="primary"
                     @click="connectToPort"
-                    :disabled="!selectedPort || !selectedBaudRate"
+                    :disabled="!selectedPort"
                     class="mr-2"
                   >
+                    <v-icon left>mdi-serial-port</v-icon>
                     Connect
                   </v-btn>
-                  <template v-else>
+                  <v-btn
+                    v-if="isConnecting"
+                    color="warning"
+                    @click="cancelConnection"
+                    class="mr-2"
+                  >
+                    Cancel
+                  </v-btn>
+                  <template v-if="connectionInfo.connected">
                     <v-btn
                       color="error"
                       @click="disconnectPort"
                       class="mr-2"
                     >
+                      <v-icon left>mdi-connection</v-icon>
                       Disconnect
                     </v-btn>
                     <v-btn
-                      :color="isStreaming ? 'error' : 'primary'"
+                      :color="isStreaming ? 'warning' : 'success'"
                       @click="toggleStreaming"
                       class="mr-2"
                     >
+                      <v-icon left>{{ isStreaming ? 'mdi-stop' : 'mdi-broadcast' }}</v-icon>
                       {{ isStreaming ? 'Stop Stream' : 'Start Stream' }}
                     </v-btn>
                   </template>
@@ -289,8 +357,6 @@
         availablePorts: [],
         selectedPort: null,
         serialPortInfo: { serial_port: 'Not connected', baud_rate: 0 },
-        baudRates: [4800, 38400],  // Updated to only show valid baud rates
-        selectedBaudRate: 4800,
         availableMessageTypes: [],
         selectedMessageTypes: [],
         pollingInterval: null,
@@ -301,6 +367,18 @@
           streamed_messages: 0
         },
         dialog: false,
+        // Connection status
+        isConnecting: false,
+        connectionInfo: {
+          connected: false,
+          status: 'disconnected',
+          message: '',
+          port: null,
+          baud_rate: 0,
+          detected_baud: null,
+          required_sentences: []
+        },
+        connectionPollInterval: null,
         // NMEA message type descriptions
         nmeaDescriptions: {
           'GPZDA': 'Date & Time',
@@ -314,8 +392,11 @@
           'GPGSA': 'GPS DOP & Active Satellites',
           'GPGSV': 'Satellites in View',
           'HCHDT': 'Heading True',
+          'HCHDG': 'Heading Magnetic',
           'TIROT': 'Rate of Turn',
-          'WIMDA': 'Meteorological Composite'
+          'WIMDA': 'Meteorological Composite',
+          'WIVWR': 'Relative Wind (Alt)',
+          'WIVWT': 'True Wind (Alt)'
         }
       },
       computed: {
@@ -329,6 +410,18 @@
               showRaw: false
             };
           });
+        },
+        connectionStatusText() {
+          const statusMap = {
+            'disconnected': 'Disconnected',
+            'trying_4800': 'Trying 4800 baud...',
+            'trying_38400': 'Trying 38400 baud...',
+            'switching_baud': 'Switching to 38400 baud...',
+            'enabling_sentences': 'Enabling NMEA sentences...',
+            'connected': 'Connected',
+            'failed': 'Connection Failed'
+          };
+          return statusMap[this.connectionInfo.status] || this.connectionInfo.status;
         }
       },
       methods: {
@@ -618,20 +711,78 @@
             console.error('Error fetching ports:', error);
           }
         },
+        async fetchConnectionStatus() {
+          try {
+            const response = await axios.get('/api/connection/status');
+            this.connectionInfo = response.data;
+            
+            // Update isConnecting based on status
+            const connectingStatuses = ['trying_4800', 'trying_38400', 'switching_baud', 'enabling_sentences'];
+            this.isConnecting = connectingStatuses.includes(this.connectionInfo.status);
+            
+            // If connected and not polling, start polling
+            if (this.connectionInfo.connected && !this.pollingInterval) {
+              this.startPolling();
+            }
+            
+            return response.data;
+          } catch (error) {
+            console.error('Error fetching connection status:', error);
+            return null;
+          }
+        },
         async connectToPort() {
-          if (!this.selectedPort || !this.selectedBaudRate) return;
+          if (!this.selectedPort) return;
+          
+          this.isConnecting = true;
+          this.connectionInfo.status = 'trying_4800';
+          this.connectionInfo.message = 'Initiating connection...';
+          
+          // Start polling connection status during connection
+          this.startConnectionStatusPolling();
+          
           try {
             const response = await axios.post('/api/serial/select', {
-              port: this.selectedPort,
-              baud_rate: this.selectedBaudRate
+              port: this.selectedPort
             });
+            
+            // Stop connection status polling
+            this.stopConnectionStatusPolling();
+            
+            // Fetch final connection status
+            await this.fetchConnectionStatus();
+            
             if (response.data.success) {
               this.startPolling();
               await this.checkStreamingStatus();
             }
           } catch (error) {
             console.error('Error connecting to port:', error);
+            this.stopConnectionStatusPolling();
+            this.connectionInfo.status = 'failed';
+            this.connectionInfo.message = 'Connection error: ' + error.message;
+          } finally {
+            this.isConnecting = false;
           }
+        },
+        startConnectionStatusPolling() {
+          // Poll connection status every 500ms during connection
+          this.connectionPollInterval = setInterval(async () => {
+            await this.fetchConnectionStatus();
+          }, 500);
+        },
+        stopConnectionStatusPolling() {
+          if (this.connectionPollInterval) {
+            clearInterval(this.connectionPollInterval);
+            this.connectionPollInterval = null;
+          }
+        },
+        cancelConnection() {
+          // TODO: Implement actual cancellation on backend
+          this.stopConnectionStatusPolling();
+          this.isConnecting = false;
+          this.connectionInfo.status = 'disconnected';
+          this.connectionInfo.message = 'Connection cancelled';
         },
         async toggleStreaming() {
           try {
@@ -688,6 +839,15 @@
               this.selectedMessageTypes = [];
               this.isStreaming = false;
               this.serialPortInfo = { serial_port: 'Not connected', baud_rate: 0 };
+              this.connectionInfo = {
+                connected: false,
+                status: 'disconnected',
+                message: '',
+                port: null,
+                baud_rate: 0,
+                detected_baud: null,
+                required_sentences: []
+              };
               // Force refresh available ports
               await this.fetchPorts();
             }
@@ -699,10 +859,10 @@
           try {
             const response = await axios.get('/api/serial');
             this.serialPortInfo = response.data;
-            // Update selected baud rate to match current connection
-            if (this.serialPortInfo.serial_port !== 'Not connected') {
-              this.selectedBaudRate = this.serialPortInfo.baud_rate;
-            }
+            
+            // Also fetch connection status
+            await this.fetchConnectionStatus();
+            
             // If we're not connected but the backend says we are, update our state
             if (this.serialPortInfo.serial_port !== 'Not connected' && !this.pollingInterval) {
               this.startPolling();
@@ -777,7 +937,7 @@
         startPolling() {
           this.pollingInterval = setInterval(() => {
             this.readSerial();
-            this.fetchSerialInfo();
+            this.fetchConnectionStatus();
             this.checkStreamingStatus();
           }, 1000);
         },
@@ -797,11 +957,13 @@
       },
       mounted() {
         this.fetchPorts();
+        this.fetchConnectionStatus();
         this.fetchSerialInfo();
         this.checkStreamingStatus();
       },
       beforeDestroy() {
         this.stopPolling();
+        this.stopConnectionStatusPolling();
       }
     });
         </script>
