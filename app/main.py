@@ -141,6 +141,25 @@ class NMEAHandler:
             }
         }
         
+        # Historical sensor data for sparklines (15 minutes = 900 seconds)
+        self.history_duration = 900  # seconds
+        self.sensor_history = {
+            'wind_apparent_speed': [],
+            'wind_apparent_angle': [],
+            'wind_true_speed': [],
+            'wind_true_direction': [],
+            'temperature': [],
+            'humidity': [],
+            'pressure': [],
+            'heading': [],
+            'pitch': [],
+            'roll': [],
+            'rate_of_turn': [],
+            'gps_speed': [],
+            'gps_course': [],
+            'satellites': []
+        }
+        
         # Thread control
         self.reader_thread = None
         self.should_stop = False
@@ -281,11 +300,14 @@ class NMEAHandler:
                         self.sensor_data['wind_apparent']['speed_kts'] = speed
                         self.sensor_data['wind_apparent']['source'] = 'WIMWV'
                         self.sensor_data['wind_apparent']['timestamp'] = timestamp
+                        self._record_history('wind_apparent_speed', speed)
+                        self._record_history('wind_apparent_angle', angle)
                     elif reference == 'T':
                         self.sensor_data['wind_true']['angle'] = angle
                         self.sensor_data['wind_true']['speed_kts'] = speed
                         self.sensor_data['wind_true']['source'] = 'WIMWV'
                         self.sensor_data['wind_true']['timestamp'] = timestamp
+                        self._record_history('wind_true_speed', speed)
             
             # WIMWD - Wind Direction and Speed (True, relative to north)
             elif msg_type == 'WIMWD':
@@ -301,6 +323,8 @@ class NMEAHandler:
                         self.sensor_data['wind_true']['speed_kts'] = speed_kts
                     self.sensor_data['wind_true']['source'] = 'WIMWD'
                     self.sensor_data['wind_true']['timestamp'] = timestamp
+                    self._record_history('wind_true_direction', dir_true)
+                    self._record_history('wind_true_speed', speed_kts)
             
             # WIMDA - Meteorological Composite
             elif msg_type == 'WIMDA':
@@ -317,6 +341,9 @@ class NMEAHandler:
                     self.sensor_data['atmosphere']['dew_point_c'] = dew_point
                     self.sensor_data['atmosphere']['source'] = 'WIMDA'
                     self.sensor_data['atmosphere']['timestamp'] = timestamp
+                    self._record_history('temperature', temp_c)
+                    self._record_history('humidity', humidity)
+                    self._record_history('pressure', pressure_bar)
             
             # HCHDT - Heading True
             elif msg_type == 'HCHDT':
@@ -326,6 +353,7 @@ class NMEAHandler:
                     self.sensor_data['attitude']['heading_true'] = heading
                     self.sensor_data['attitude']['source'] = 'HCHDT'
                     self.sensor_data['attitude']['timestamp'] = timestamp
+                    self._record_history('heading', heading)
             
             # HCHDG - Heading Magnetic
             elif msg_type == 'HCHDG':
@@ -351,10 +379,12 @@ class NMEAHandler:
                             self.sensor_data['attitude']['pitch_deg'] = value
                             self.sensor_data['attitude']['source'] = 'YXXDR'
                             self.sensor_data['attitude']['timestamp'] = timestamp
+                            self._record_history('pitch', value)
                         elif name == 'ROLL':
                             self.sensor_data['attitude']['roll_deg'] = value
                             self.sensor_data['attitude']['source'] = 'YXXDR'
                             self.sensor_data['attitude']['timestamp'] = timestamp
+                            self._record_history('roll', value)
                     i += 4
             
             # TIROT - Rate of Turn
@@ -363,6 +393,7 @@ class NMEAHandler:
                 if len(fields) >= 3 and fields[2] == 'A' and fields[1]:
                     rate = float(fields[1])
                     self.sensor_data['attitude']['rate_of_turn'] = rate
+                    self._record_history('rate_of_turn', rate)
                     if 'source' not in self.sensor_data['attitude'] or self.sensor_data['attitude']['source'] not in ['HCHDT', 'YXXDR']:
                         self.sensor_data['attitude']['source'] = 'TIROT'
                         self.sensor_data['attitude']['timestamp'] = timestamp
@@ -386,6 +417,7 @@ class NMEAHandler:
                     self.sensor_data['gps']['altitude_m'] = altitude
                     self.sensor_data['gps']['source'] = 'GPGGA'
                     self.sensor_data['gps']['timestamp'] = timestamp
+                    self._record_history('satellites', satellites)
             
             # GPVTG - Course Over Ground and Ground Speed
             elif msg_type == 'GPVTG':
@@ -396,6 +428,8 @@ class NMEAHandler:
                     
                     self.sensor_data['gps']['course_true'] = course
                     self.sensor_data['gps']['speed_kts'] = speed_kts
+                    self._record_history('gps_speed', speed_kts)
+                    self._record_history('gps_course', course)
                     if self.sensor_data['gps']['source'] != 'GPGGA':
                         self.sensor_data['gps']['source'] = 'GPVTG'
                         self.sensor_data['gps']['timestamp'] = timestamp
@@ -423,6 +457,33 @@ class NMEAHandler:
         except Exception as e:
             # Silently ignore parse errors to not spam logs
             pass
+
+    def _record_history(self, key, value):
+        """Record a value to the history buffer for sparklines."""
+        if value is None:
+            return
+        
+        now = time.time()
+        self.sensor_history[key].append({'t': now, 'v': value})
+        
+        # Prune old entries (older than 15 minutes)
+        cutoff = now - self.history_duration
+        self.sensor_history[key] = [
+            entry for entry in self.sensor_history[key] 
+            if entry['t'] >= cutoff
+        ]
+
+    def get_sensor_history(self):
+        """Return the sensor history for sparklines."""
+        # Return history with relative timestamps (seconds ago)
+        now = time.time()
+        result = {}
+        for key, entries in self.sensor_history.items():
+            result[key] = [
+                {'t': round(now - entry['t']), 'v': entry['v']}
+                for entry in entries
+            ]
+        return result
 
     def _parse_nmea_coord(self, coord_str, direction):
         """Convert NMEA coordinate (DDMM.MMMM) to decimal degrees."""
@@ -1124,6 +1185,11 @@ def get_connection_status():
 def get_sensor_state():
     """Get aggregated sensor data for dashboard display"""
     return jsonify(nmea_handler.get_sensor_data())
+
+@app.route('/api/sensor/history', methods=['GET'])
+def get_sensor_history():
+    """Get historical sensor data for sparklines (15 min)"""
+    return jsonify(nmea_handler.get_sensor_history())
 
 # ============== Sentence Configuration API ==============
 
