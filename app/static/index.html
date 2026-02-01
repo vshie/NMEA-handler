@@ -12,28 +12,86 @@
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
   <style>
     .terminal {
-      font-family: 'Courier New', monospace;
-      background-color: #f5f5f5;
+      font-family: 'Roboto', sans-serif;
+      background-color: #fafafa;
       border: 1px solid #ddd;
       border-radius: 4px;
       padding: 10px;
       margin: 10px 0;
-      height: 400px;
+      height: 500px;
       overflow-y: auto;
     }
-    .message-item {
-      padding: 4px 0;
+    .message-card {
+      background-color: #fff;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .message-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      padding-bottom: 8px;
       border-bottom: 1px solid #eee;
     }
-    .message-item:last-child {
-      border-bottom: none;
-    }
-    .message-type {
-      color: #1976d2;
+    .message-type-badge {
+      background-color: #1976d2;
+      color: white;
+      padding: 4px 10px;
+      border-radius: 4px;
       font-weight: 500;
+      font-size: 12px;
     }
-    .message-raw {
+    .message-description {
+      color: #666;
+      font-size: 12px;
+      font-style: italic;
+    }
+    .parsed-values {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .parsed-value {
+      background-color: #f5f5f5;
+      padding: 8px 10px;
+      border-radius: 4px;
+      border-left: 3px solid #1976d2;
+    }
+    .parsed-value-label {
+      font-size: 11px;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .parsed-value-data {
+      font-size: 16px;
+      font-weight: 500;
       color: #333;
+    }
+    .parsed-value-unit {
+      font-size: 12px;
+      color: #666;
+      margin-left: 2px;
+    }
+    .raw-message {
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      color: #888;
+      background-color: #f9f9f9;
+      padding: 6px 8px;
+      border-radius: 4px;
+      word-break: break-all;
+    }
+    .raw-toggle {
+      font-size: 11px;
+      color: #1976d2;
+      cursor: pointer;
+      margin-top: 4px;
     }
     .connection-status {
       margin: 10px 0;
@@ -164,11 +222,28 @@
             </v-card-title>
             <v-card-text>
               <div class="terminal">
-                <div v-for="(message, index) in messages" :key="index" class="message-item">
-                  <span class="message-type">{{ message.type }}:</span>
-                  <span class="message-raw">{{ message.raw }}</span>
+                <div v-for="(message, index) in parsedMessages" :key="index" class="message-card">
+                  <div class="message-header">
+                    <div>
+                      <span class="message-type-badge">{{ message.type }}</span>
+                      <span class="message-description ml-2">{{ message.description }}</span>
+                    </div>
+                    <span class="text-caption grey--text">{{ formatTime(message.timestamp) }}</span>
+                  </div>
+                  <div class="parsed-values" v-if="message.values && message.values.length > 0">
+                    <div class="parsed-value" v-for="(val, vIndex) in message.values" :key="vIndex">
+                      <div class="parsed-value-label">{{ val.label }}</div>
+                      <div class="parsed-value-data">
+                        {{ val.value }}<span class="parsed-value-unit" v-if="val.unit">{{ val.unit }}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="raw-toggle" @click="message.showRaw = !message.showRaw">
+                    {{ message.showRaw ? 'Hide' : 'Show' }} raw data
+                  </div>
+                  <div class="raw-message" v-if="message.showRaw">{{ message.raw }}</div>
                 </div>
-                <div v-if="messages.length === 0" class="text-center pa-4">
+                <div v-if="parsedMessages.length === 0" class="text-center pa-4">
                   No messages received yet. Connect to a serial port to start receiving messages.
                 </div>
               </div>
@@ -225,9 +300,316 @@
           selected_message_types: [],
           streamed_messages: 0
         },
-        dialog: false
+        dialog: false,
+        // NMEA message type descriptions
+        nmeaDescriptions: {
+          'GPZDA': 'Date & Time',
+          'WIMWV': 'Wind Speed & Angle (Relative)',
+          'WIMWD': 'Wind Direction & Speed (True)',
+          'GPGGA': 'GPS Position Fix',
+          'YXXDR': 'Transducer Measurements',
+          'GPRMC': 'Recommended Minimum Navigation',
+          'GPVTG': 'Track Made Good & Ground Speed',
+          'GPGLL': 'Geographic Position',
+          'GPGSA': 'GPS DOP & Active Satellites',
+          'GPGSV': 'Satellites in View',
+          'HCHDT': 'Heading True',
+          'TIROT': 'Rate of Turn',
+          'WIMDA': 'Meteorological Composite'
+        }
+      },
+      computed: {
+        parsedMessages() {
+          return this.messages.map(msg => {
+            const parsed = this.parseNMEA(msg.raw, msg.type);
+            return {
+              ...msg,
+              description: this.nmeaDescriptions[msg.type] || 'Unknown Message Type',
+              values: parsed,
+              showRaw: false
+            };
+          });
+        }
       },
       methods: {
+        formatTime(timestamp) {
+          if (!timestamp) return '';
+          const date = new Date(timestamp);
+          return date.toLocaleTimeString();
+        },
+        parseNMEA(raw, type) {
+          try {
+            // Remove checksum if present
+            const data = raw.split('*')[0];
+            const fields = data.split(',');
+            
+            switch(type) {
+              case 'GPZDA': return this.parseGPZDA(fields);
+              case 'WIMWV': return this.parseWIMWV(fields);
+              case 'WIMWD': return this.parseWIMWD(fields);
+              case 'GPGGA': return this.parseGPGGA(fields);
+              case 'YXXDR': return this.parseYXXDR(fields);
+              case 'GPRMC': return this.parseGPRMC(fields);
+              case 'GPVTG': return this.parseGPVTG(fields);
+              case 'GPGLL': return this.parseGPGLL(fields);
+              case 'HCHDT': return this.parseHCHDT(fields);
+              case 'WIMDA': return this.parseWIMDA(fields);
+              default: return this.parseGeneric(fields);
+            }
+          } catch (e) {
+            console.error('Error parsing NMEA:', e);
+            return [];
+          }
+        },
+        parseGPZDA(fields) {
+          // $GPZDA,hhmmss.ss,dd,mm,yyyy,xx,yy*CC
+          const values = [];
+          if (fields[1]) {
+            const time = fields[1];
+            const hours = time.substring(0, 2);
+            const mins = time.substring(2, 4);
+            const secs = time.substring(4, 6);
+            values.push({ label: 'UTC Time', value: `${hours}:${mins}:${secs}`, unit: '' });
+          }
+          if (fields[2] && fields[3] && fields[4]) {
+            values.push({ label: 'Date', value: `${fields[4]}-${fields[3].padStart(2,'0')}-${fields[2].padStart(2,'0')}`, unit: '' });
+          }
+          return values;
+        },
+        parseWIMWV(fields) {
+          // $WIMWV,angle,R/T,speed,unit,status*CC
+          const values = [];
+          if (fields[1]) {
+            values.push({ label: 'Wind Angle', value: parseFloat(fields[1]).toFixed(1), unit: '°' });
+          }
+          if (fields[2]) {
+            values.push({ label: 'Reference', value: fields[2] === 'R' ? 'Relative' : 'True', unit: '' });
+          }
+          if (fields[3] && fields[4]) {
+            const unitMap = { 'K': 'km/h', 'M': 'm/s', 'N': 'kts', 'S': 'mph' };
+            values.push({ label: 'Wind Speed', value: parseFloat(fields[3]).toFixed(1), unit: unitMap[fields[4]] || fields[4] });
+          }
+          if (fields[5]) {
+            values.push({ label: 'Status', value: fields[5] === 'A' ? 'Valid' : 'Invalid', unit: '' });
+          }
+          return values;
+        },
+        parseWIMWD(fields) {
+          // $WIMWD,dir_true,T,dir_mag,M,speed_kts,N,speed_ms,M*CC
+          const values = [];
+          if (fields[1]) {
+            values.push({ label: 'True Direction', value: parseFloat(fields[1]).toFixed(1), unit: '°' });
+          }
+          if (fields[3]) {
+            values.push({ label: 'Magnetic Direction', value: parseFloat(fields[3]).toFixed(1), unit: '°' });
+          }
+          if (fields[5]) {
+            values.push({ label: 'Wind Speed', value: parseFloat(fields[5]).toFixed(1), unit: 'kts' });
+          }
+          if (fields[7]) {
+            values.push({ label: 'Wind Speed', value: parseFloat(fields[7]).toFixed(1), unit: 'm/s' });
+          }
+          return values;
+        },
+        parseGPGGA(fields) {
+          // $GPGGA,time,lat,N/S,lon,E/W,quality,sats,hdop,alt,M,geoid,M,age,station*CC
+          const values = [];
+          if (fields[1]) {
+            const time = fields[1];
+            const hours = time.substring(0, 2);
+            const mins = time.substring(2, 4);
+            const secs = time.substring(4, 6);
+            values.push({ label: 'UTC Time', value: `${hours}:${mins}:${secs}`, unit: '' });
+          }
+          if (fields[2] && fields[3]) {
+            const lat = this.convertDMtoDD(fields[2], fields[3]);
+            values.push({ label: 'Latitude', value: lat.toFixed(6), unit: '°' });
+          }
+          if (fields[4] && fields[5]) {
+            const lon = this.convertDMtoDD(fields[4], fields[5]);
+            values.push({ label: 'Longitude', value: lon.toFixed(6), unit: '°' });
+          }
+          if (fields[6]) {
+            const qualityMap = { '0': 'Invalid', '1': 'GPS Fix', '2': 'DGPS', '4': 'RTK Fixed', '5': 'RTK Float' };
+            values.push({ label: 'Fix Quality', value: qualityMap[fields[6]] || fields[6], unit: '' });
+          }
+          if (fields[7]) {
+            values.push({ label: 'Satellites', value: parseInt(fields[7]), unit: '' });
+          }
+          if (fields[8]) {
+            values.push({ label: 'HDOP', value: parseFloat(fields[8]).toFixed(1), unit: '' });
+          }
+          if (fields[9]) {
+            values.push({ label: 'Altitude', value: parseFloat(fields[9]).toFixed(1), unit: 'm' });
+          }
+          return values;
+        },
+        parseYXXDR(fields) {
+          // $YXXDR,type,value,unit,name,... (repeating groups of 4)
+          const values = [];
+          for (let i = 1; i < fields.length - 3; i += 4) {
+            const type = fields[i];
+            const value = fields[i + 1];
+            const unit = fields[i + 2];
+            const name = fields[i + 3];
+            
+            if (value && name) {
+              let label = name;
+              let displayUnit = unit;
+              let displayValue = parseFloat(value);
+              
+              // Map common transducer names to readable labels
+              if (name === 'PTCH' || name.includes('PITCH')) {
+                label = 'Pitch';
+                displayUnit = '°';
+              } else if (name === 'ROLL') {
+                label = 'Roll';
+                displayUnit = '°';
+              } else if (name === 'AIRTEMP' || name.includes('TEMP')) {
+                label = 'Air Temperature';
+                displayUnit = '°C';
+              } else if (name === 'BARO' || name.includes('PRES')) {
+                label = 'Barometric Pressure';
+                displayUnit = unit === 'B' ? 'bar' : 'hPa';
+                if (unit === 'B') displayValue = (displayValue * 1000).toFixed(1);
+              } else if (name === 'HUMIDITY' || name === 'HUMID') {
+                label = 'Humidity';
+                displayUnit = '%';
+              }
+              
+              if (!isNaN(displayValue)) {
+                values.push({ 
+                  label: label, 
+                  value: typeof displayValue === 'number' ? displayValue.toFixed(1) : displayValue, 
+                  unit: displayUnit 
+                });
+              }
+            }
+          }
+          return values;
+        },
+        parseGPRMC(fields) {
+          // $GPRMC,time,status,lat,N/S,lon,E/W,speed,track,date,mag_var,E/W*CC
+          const values = [];
+          if (fields[1]) {
+            const time = fields[1];
+            const hours = time.substring(0, 2);
+            const mins = time.substring(2, 4);
+            const secs = time.substring(4, 6);
+            values.push({ label: 'UTC Time', value: `${hours}:${mins}:${secs}`, unit: '' });
+          }
+          if (fields[2]) {
+            values.push({ label: 'Status', value: fields[2] === 'A' ? 'Active' : 'Void', unit: '' });
+          }
+          if (fields[3] && fields[4]) {
+            const lat = this.convertDMtoDD(fields[3], fields[4]);
+            values.push({ label: 'Latitude', value: lat.toFixed(6), unit: '°' });
+          }
+          if (fields[5] && fields[6]) {
+            const lon = this.convertDMtoDD(fields[5], fields[6]);
+            values.push({ label: 'Longitude', value: lon.toFixed(6), unit: '°' });
+          }
+          if (fields[7]) {
+            values.push({ label: 'Speed Over Ground', value: parseFloat(fields[7]).toFixed(1), unit: 'kts' });
+          }
+          if (fields[8]) {
+            values.push({ label: 'Track Angle', value: parseFloat(fields[8]).toFixed(1), unit: '°' });
+          }
+          return values;
+        },
+        parseGPVTG(fields) {
+          // $GPVTG,track_true,T,track_mag,M,speed_kts,N,speed_kmh,K*CC
+          const values = [];
+          if (fields[1]) {
+            values.push({ label: 'Track True', value: parseFloat(fields[1]).toFixed(1), unit: '°' });
+          }
+          if (fields[3]) {
+            values.push({ label: 'Track Magnetic', value: parseFloat(fields[3]).toFixed(1), unit: '°' });
+          }
+          if (fields[5]) {
+            values.push({ label: 'Ground Speed', value: parseFloat(fields[5]).toFixed(1), unit: 'kts' });
+          }
+          if (fields[7]) {
+            values.push({ label: 'Ground Speed', value: parseFloat(fields[7]).toFixed(1), unit: 'km/h' });
+          }
+          return values;
+        },
+        parseGPGLL(fields) {
+          // $GPGLL,lat,N/S,lon,E/W,time,status*CC
+          const values = [];
+          if (fields[1] && fields[2]) {
+            const lat = this.convertDMtoDD(fields[1], fields[2]);
+            values.push({ label: 'Latitude', value: lat.toFixed(6), unit: '°' });
+          }
+          if (fields[3] && fields[4]) {
+            const lon = this.convertDMtoDD(fields[3], fields[4]);
+            values.push({ label: 'Longitude', value: lon.toFixed(6), unit: '°' });
+          }
+          if (fields[5]) {
+            const time = fields[5];
+            const hours = time.substring(0, 2);
+            const mins = time.substring(2, 4);
+            const secs = time.substring(4, 6);
+            values.push({ label: 'UTC Time', value: `${hours}:${mins}:${secs}`, unit: '' });
+          }
+          if (fields[6]) {
+            values.push({ label: 'Status', value: fields[6] === 'A' ? 'Valid' : 'Invalid', unit: '' });
+          }
+          return values;
+        },
+        parseHCHDT(fields) {
+          // $HCHDT,heading,T*CC
+          const values = [];
+          if (fields[1]) {
+            values.push({ label: 'True Heading', value: parseFloat(fields[1]).toFixed(1), unit: '°' });
+          }
+          return values;
+        },
+        parseWIMDA(fields) {
+          // $WIMDA,baro_in,I,baro_bar,B,air_temp,C,water_temp,C,humidity,%,dew_point,C,
+          //        wind_dir_true,T,wind_dir_mag,M,wind_speed_kts,N,wind_speed_ms,M*CC
+          const values = [];
+          if (fields[3]) {
+            values.push({ label: 'Barometric Pressure', value: (parseFloat(fields[3]) * 1000).toFixed(1), unit: 'hPa' });
+          }
+          if (fields[5]) {
+            values.push({ label: 'Air Temperature', value: parseFloat(fields[5]).toFixed(1), unit: '°C' });
+          }
+          if (fields[9]) {
+            values.push({ label: 'Relative Humidity', value: parseFloat(fields[9]).toFixed(0), unit: '%' });
+          }
+          if (fields[11]) {
+            values.push({ label: 'Dew Point', value: parseFloat(fields[11]).toFixed(1), unit: '°C' });
+          }
+          if (fields[13]) {
+            values.push({ label: 'Wind Direction True', value: parseFloat(fields[13]).toFixed(1), unit: '°' });
+          }
+          if (fields[17]) {
+            values.push({ label: 'Wind Speed', value: parseFloat(fields[17]).toFixed(1), unit: 'kts' });
+          }
+          return values;
+        },
+        parseGeneric(fields) {
+          // For unknown message types, just show the fields
+          const values = [];
+          for (let i = 1; i < Math.min(fields.length, 8); i++) {
+            if (fields[i]) {
+              values.push({ label: `Field ${i}`, value: fields[i], unit: '' });
+            }
+          }
+          return values;
+        },
+        convertDMtoDD(coord, direction) {
+          // Convert NMEA coordinates (DDMM.MMMM) to decimal degrees
+          if (!coord) return 0;
+          const degrees = parseInt(coord.substring(0, coord.indexOf('.') - 2));
+          const minutes = parseFloat(coord.substring(coord.indexOf('.') - 2));
+          let dd = degrees + (minutes / 60);
+          if (direction === 'S' || direction === 'W') {
+            dd = -dd;
+          }
+          return dd;
+        },
         async fetchPorts() {
           try {
             const response = await axios.get('/api/serial/ports');
