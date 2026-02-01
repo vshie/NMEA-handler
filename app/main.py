@@ -16,15 +16,41 @@ app = Flask(__name__, static_folder='static')
 CORS(app)
 
 class NMEAHandler:
-    # Required NMEA sentences for dashboard display
-    # These will be enabled after connecting at 38400 baud
-    REQUIRED_SENTENCES = {
-        'MWVT': {'interval': 10, 'description': 'True wind (vessel-relative)'},
-        'MWD':  {'interval': 10, 'description': 'True wind (north-relative)'},
-        'HDT':  {'interval': 10, 'description': 'True heading'},
-        'ROT':  {'interval': 10, 'description': 'Rate of turn'},
-        'ZDA':  {'interval': 10, 'description': 'Time and date'},
+    # Complete registry of all WX200 supported NMEA sentences
+    # Based on WX Series NMEA 0183 Developers Technical Manual
+    SUPPORTED_SENTENCES = {
+        'DTM':   {'name': 'Datum Reference', 'description': 'GPS datum reference', 'default_enabled': False, 'default_interval': 10},
+        'GGA':   {'name': 'GPS Fix Data', 'description': 'Position, altitude, satellites, fix quality', 'default_enabled': True, 'default_interval': 10},
+        'GLL':   {'name': 'Geographic Position', 'description': 'Latitude/Longitude position', 'default_enabled': False, 'default_interval': 10},
+        'GSA':   {'name': 'DOP & Satellites', 'description': 'GPS dilution of precision and active satellites', 'default_enabled': False, 'default_interval': 10},
+        'GSV':   {'name': 'Satellites in View', 'description': 'Satellite details (azimuth, elevation, SNR)', 'default_enabled': False, 'default_interval': 10},
+        'HDG':   {'name': 'Heading (Magnetic)', 'description': 'Magnetic heading with deviation and variation', 'default_enabled': True, 'default_interval': 10},
+        'HDT':   {'name': 'Heading (True)', 'description': 'True heading relative to north', 'default_enabled': False, 'default_interval': 10},
+        'MDA':   {'name': 'Meteorological Composite', 'description': 'Pressure, temperature, humidity, dew point, wind', 'default_enabled': True, 'default_interval': 10},
+        'MWD':   {'name': 'Wind Direction (True)', 'description': 'True wind direction and speed relative to north', 'default_enabled': False, 'default_interval': 10},
+        'MWVR': {'name': 'Wind (Apparent)', 'description': 'Relative/apparent wind speed and angle', 'default_enabled': True, 'default_interval': 10},
+        'MWVT': {'name': 'Wind (True)', 'description': 'True/theoretical wind speed and angle', 'default_enabled': False, 'default_interval': 10},
+        'RMC':   {'name': 'Recommended Minimum', 'description': 'Position, speed, course, date, magnetic variation', 'default_enabled': True, 'default_interval': 10},
+        'ROT':   {'name': 'Rate of Turn', 'description': 'Rate of turn in degrees per minute', 'default_enabled': False, 'default_interval': 10},
+        'THS':   {'name': 'True Heading & Status', 'description': 'True heading with mode indicator', 'default_enabled': False, 'default_interval': 10},
+        'VTG':   {'name': 'Course Over Ground', 'description': 'Course and speed over ground', 'default_enabled': False, 'default_interval': 10},
+        'VWR':   {'name': 'Relative Wind (Alt)', 'description': 'Relative wind speed and angle (alternative format)', 'default_enabled': False, 'default_interval': 10},
+        'VWT':   {'name': 'True Wind (Alt)', 'description': 'True wind speed and angle (alternative format)', 'default_enabled': True, 'default_interval': 10},
+        'XDRA': {'name': 'Transducer A', 'description': 'Wind chill, heat index, station pressure', 'default_enabled': True, 'default_interval': 10},
+        'XDRB': {'name': 'Transducer B', 'description': 'Pitch and roll angles', 'default_enabled': True, 'default_interval': 10},
+        'XDRC': {'name': 'Transducer C', 'description': 'X, Y, Z accelerometer readings', 'default_enabled': False, 'default_interval': 10},
+        'XDRD': {'name': 'Transducer D', 'description': 'Compensated rate gyros (roll, pitch, yaw)', 'default_enabled': True, 'default_interval': 10},
+        'XDRE': {'name': 'Transducer E', 'description': 'Raw rate gyros (roll, pitch, yaw)', 'default_enabled': False, 'default_interval': 10},
+        'XDRH': {'name': 'Transducer H', 'description': 'Heater temperatures and voltages', 'default_enabled': False, 'default_interval': 10},
+        'XDRR': {'name': 'Transducer R', 'description': 'Rain accumulation, duration, rate', 'default_enabled': False, 'default_interval': 10},
+        'XDRT': {'name': 'Transducer T', 'description': 'Internal temperatures and voltages', 'default_enabled': False, 'default_interval': 10},
+        'XDRW': {'name': 'Transducer W', 'description': 'Raw/unfiltered wind measurements', 'default_enabled': False, 'default_interval': 10},
+        'ZDA':   {'name': 'Time & Date', 'description': 'UTC time and date', 'default_enabled': False, 'default_interval': 10},
     }
+    
+    # Sentences auto-enabled on connection for dashboard display
+    # These are enabled in addition to device defaults
+    REQUIRED_SENTENCES = ['MWVT', 'MWD', 'HDT', 'ROT', 'ZDA']
     
     # Connection status phases
     CONN_STATUS_DISCONNECTED = 'disconnected'
@@ -374,11 +400,15 @@ class NMEAHandler:
                 return False, "Not connected"
             
             enabled_count = 0
-            for sentence_id, config in self.REQUIRED_SENTENCES.items():
+            for sentence_id in self.REQUIRED_SENTENCES:
+                config = self.SUPPORTED_SENTENCES.get(sentence_id, {})
+                interval = config.get('default_interval', 10)
+                description = config.get('description', sentence_id)
+                
                 # Format: $PAMTC,EN,<id>,<enable>,<interval>
                 # interval is in tenths of a second (10 = 1 second)
-                cmd = f'$PAMTC,EN,{sentence_id},1,{config["interval"]}\r\n'
-                self.app_logger.info(f"Enabling sentence {sentence_id}: {config['description']}")
+                cmd = f'$PAMTC,EN,{sentence_id},1,{interval}\r\n'
+                self.app_logger.info(f"Enabling sentence {sentence_id}: {description}")
                 self.serial_connection.write(cmd.encode())
                 time.sleep(0.2)  # Small delay between commands
                 enabled_count += 1
@@ -389,6 +419,158 @@ class NMEAHandler:
         except Exception as e:
             self.app_logger.error(f"Error enabling sentences: {e}")
             return False, str(e)
+
+    def configure_sentence(self, sentence_id, enabled, interval=None):
+        """
+        Configure a single NMEA sentence on the device.
+        
+        Args:
+            sentence_id: The sentence identifier (e.g., 'MWD', 'XDRA')
+            enabled: True to enable, False to disable
+            interval: Transmission interval in tenths of seconds (default: 10 = 1 second)
+        
+        Returns (success, message)
+        """
+        try:
+            if not self.serial_connection or not self.serial_connection.is_open:
+                return False, "Not connected"
+            
+            if sentence_id not in self.SUPPORTED_SENTENCES:
+                return False, f"Unknown sentence: {sentence_id}"
+            
+            if interval is None:
+                interval = self.SUPPORTED_SENTENCES[sentence_id].get('default_interval', 10)
+            
+            enable_flag = 1 if enabled else 0
+            cmd = f'$PAMTC,EN,{sentence_id},{enable_flag},{interval}\r\n'
+            
+            self.app_logger.info(f"Configuring sentence {sentence_id}: enabled={enabled}, interval={interval/10}s")
+            self.serial_connection.write(cmd.encode())
+            time.sleep(0.2)
+            
+            action = "Enabled" if enabled else "Disabled"
+            return True, f"{action} {sentence_id}"
+            
+        except Exception as e:
+            self.app_logger.error(f"Error configuring sentence {sentence_id}: {e}")
+            return False, str(e)
+
+    def query_sentence_config(self):
+        """
+        Query the device for current sentence configuration.
+        Sends $PAMTC,EN,Q and parses the response.
+        
+        Returns (success, config_dict or error_message)
+        """
+        try:
+            if not self.serial_connection or not self.serial_connection.is_open:
+                return False, "Not connected"
+            
+            # Clear any pending data
+            self.serial_connection.reset_input_buffer()
+            
+            # Send query command
+            self.app_logger.info("Querying device sentence configuration")
+            self.serial_connection.write(b'$PAMTC,EN,Q\r\n')
+            
+            # Collect responses (device sends multiple $PAMTR,EN lines)
+            config = {}
+            start_time = time.time()
+            timeout = 5  # 5 second timeout
+            
+            while time.time() - start_time < timeout:
+                line = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
+                
+                if line.startswith('$PAMTR,EN,'):
+                    # Parse: $PAMTR,EN,<total>,<num>,<id>,<enabled>,<interval>
+                    parts = line.split(',')
+                    if len(parts) >= 6:
+                        sentence_id = parts[3]
+                        enabled = parts[4] == '1'
+                        interval = int(parts[5]) if parts[5].isdigit() else 10
+                        
+                        config[sentence_id] = {
+                            'enabled': enabled,
+                            'interval': interval
+                        }
+                        self.app_logger.info(f"  {sentence_id}: enabled={enabled}, interval={interval/10}s")
+                
+                # Check if we've received all responses
+                if len(config) >= len(self.SUPPORTED_SENTENCES):
+                    break
+                    
+                time.sleep(0.05)
+            
+            if config:
+                return True, config
+            else:
+                return False, "No configuration response received"
+            
+        except Exception as e:
+            self.app_logger.error(f"Error querying sentence config: {e}")
+            return False, str(e)
+
+    def save_sentence_config(self):
+        """
+        Save current sentence configuration to device EEPROM.
+        Sends $PAMTC,EN,S command.
+        
+        Returns (success, message)
+        """
+        try:
+            if not self.serial_connection or not self.serial_connection.is_open:
+                return False, "Not connected"
+            
+            self.app_logger.info("Saving sentence configuration to device EEPROM")
+            self.serial_connection.write(b'$PAMTC,EN,S\r\n')
+            time.sleep(0.5)
+            
+            return True, "Configuration saved to device EEPROM"
+            
+        except Exception as e:
+            self.app_logger.error(f"Error saving sentence config: {e}")
+            return False, str(e)
+
+    def load_sentence_defaults(self):
+        """
+        Load factory default sentence configuration from device ROM to RAM.
+        Sends $PAMTC,EN,LD command.
+        
+        Returns (success, message)
+        """
+        try:
+            if not self.serial_connection or not self.serial_connection.is_open:
+                return False, "Not connected"
+            
+            self.app_logger.info("Loading factory default sentence configuration")
+            self.serial_connection.write(b'$PAMTC,EN,LD\r\n')
+            time.sleep(0.5)
+            
+            return True, "Factory defaults loaded"
+            
+        except Exception as e:
+            self.app_logger.error(f"Error loading sentence defaults: {e}")
+            return False, str(e)
+
+    def get_sentences_info(self):
+        """
+        Get information about all supported sentences.
+        Returns list of sentence info dictionaries.
+        """
+        sentences = []
+        for sentence_id, config in self.SUPPORTED_SENTENCES.items():
+            sentences.append({
+                'id': sentence_id,
+                'name': config['name'],
+                'description': config['description'],
+                'default_enabled': config['default_enabled'],
+                'default_interval': config['default_interval'],
+                'required': sentence_id in self.REQUIRED_SENTENCES
+            })
+        
+        # Sort by ID
+        sentences.sort(key=lambda x: x['id'])
+        return sentences
 
     def connect_serial(self, port, baud_rate=None):
         """
@@ -694,6 +876,53 @@ def get_serial_info():
 def get_connection_status():
     """Get detailed connection status information"""
     return jsonify(nmea_handler.get_connection_info())
+
+# ============== Sentence Configuration API ==============
+
+@app.route('/api/sentences', methods=['GET'])
+def get_sentences():
+    """Get list of all supported NMEA sentences with their info"""
+    return jsonify({
+        "sentences": nmea_handler.get_sentences_info(),
+        "connected": nmea_handler.serial_connection is not None and nmea_handler.serial_connection.is_open
+    })
+
+@app.route('/api/sentences/configure', methods=['POST'])
+def configure_sentence():
+    """Configure a single NMEA sentence (enable/disable, set interval)"""
+    data = request.get_json()
+    if not data or 'sentence_id' not in data:
+        return jsonify({"success": False, "message": "No sentence_id specified"})
+    
+    sentence_id = data['sentence_id']
+    enabled = data.get('enabled', True)
+    interval = data.get('interval', None)
+    
+    success, message = nmea_handler.configure_sentence(sentence_id, enabled, interval)
+    return jsonify({"success": success, "message": message})
+
+@app.route('/api/sentences/query', methods=['POST'])
+def query_sentences():
+    """Query the device for current sentence configuration"""
+    success, result = nmea_handler.query_sentence_config()
+    if success:
+        return jsonify({"success": True, "config": result})
+    else:
+        return jsonify({"success": False, "message": result})
+
+@app.route('/api/sentences/save', methods=['POST'])
+def save_sentences():
+    """Save current sentence configuration to device EEPROM"""
+    success, message = nmea_handler.save_sentence_config()
+    return jsonify({"success": success, "message": message})
+
+@app.route('/api/sentences/load-defaults', methods=['POST'])
+def load_sentence_defaults():
+    """Load factory default sentence configuration"""
+    success, message = nmea_handler.load_sentence_defaults()
+    return jsonify({"success": success, "message": message})
+
+# ============== End Sentence Configuration API ==============
 
 @app.route('/api/read', methods=['GET'])
 def read_serial():

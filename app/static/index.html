@@ -318,9 +318,9 @@
             </v-card-text>
           </v-card>
 
-          <!-- Message Types -->
-          <v-card>
-            <v-card-title>Message Types to Log</v-card-title>
+          <!-- Message Types for Streaming -->
+          <v-card class="mb-4">
+            <v-card-title>Message Types to Stream</v-card-title>
             <v-card-text>
               <div class="message-types">
                 <v-row>
@@ -340,6 +340,95 @@
                     </div>
                   </v-col>
                 </v-row>
+              </div>
+            </v-card-text>
+          </v-card>
+
+          <!-- Device Sentence Configuration -->
+          <v-card>
+            <v-card-title>
+              WX200 Sentence Configuration
+              <v-spacer></v-spacer>
+              <v-btn
+                color="primary"
+                small
+                @click="querySentenceConfig"
+                :disabled="!connectionInfo.connected || sentenceQueryLoading"
+                class="mr-2"
+              >
+                <v-icon left small>mdi-refresh</v-icon>
+                Query Device
+              </v-btn>
+              <v-btn
+                color="success"
+                small
+                @click="saveSentenceConfig"
+                :disabled="!connectionInfo.connected"
+                class="mr-2"
+              >
+                <v-icon left small>mdi-content-save</v-icon>
+                Save to Device
+              </v-btn>
+              <v-btn
+                color="warning"
+                small
+                @click="loadSentenceDefaults"
+                :disabled="!connectionInfo.connected"
+              >
+                <v-icon left small>mdi-restore</v-icon>
+                Load Defaults
+              </v-btn>
+            </v-card-title>
+            <v-card-text>
+              <v-alert v-if="!connectionInfo.connected" type="info" dense class="mb-4">
+                Connect to a WX200 device to configure sentence output.
+              </v-alert>
+              
+              <v-alert v-if="sentenceConfigMessage" :type="sentenceConfigSuccess ? 'success' : 'error'" dense dismissible class="mb-4" @input="sentenceConfigMessage = ''">
+                {{ sentenceConfigMessage }}
+              </v-alert>
+              
+              <v-simple-table dense v-if="sentences.length > 0">
+                <template v-slot:default>
+                  <thead>
+                    <tr>
+                      <th class="text-left">ID</th>
+                      <th class="text-left">Name</th>
+                      <th class="text-left">Description</th>
+                      <th class="text-center">Enabled</th>
+                      <th class="text-center">Interval</th>
+                      <th class="text-center">Required</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="sentence in sentences" :key="sentence.id">
+                      <td><code>{{ sentence.id }}</code></td>
+                      <td>{{ sentence.name }}</td>
+                      <td class="text-caption">{{ sentence.description }}</td>
+                      <td class="text-center">
+                        <v-switch
+                          v-model="sentenceConfig[sentence.id]"
+                          :disabled="!connectionInfo.connected"
+                          @change="toggleSentence(sentence.id, $event)"
+                          dense
+                          hide-details
+                          class="mt-0"
+                        ></v-switch>
+                      </td>
+                      <td class="text-center">
+                        <span class="text-caption">{{ sentence.default_interval / 10 }}s</span>
+                      </td>
+                      <td class="text-center">
+                        <v-icon v-if="sentence.required" color="primary" small>mdi-check-circle</v-icon>
+                      </td>
+                    </tr>
+                  </tbody>
+                </template>
+              </v-simple-table>
+              
+              <div v-else class="text-center pa-4">
+                <v-progress-circular v-if="sentenceQueryLoading" indeterminate color="primary"></v-progress-circular>
+                <span v-else>Loading sentence configuration...</span>
               </div>
             </v-card-text>
           </v-card>
@@ -379,6 +468,12 @@
           required_sentences: []
         },
         connectionPollInterval: null,
+        // Sentence configuration
+        sentences: [],
+        sentenceConfig: {},  // { sentence_id: enabled }
+        sentenceQueryLoading: false,
+        sentenceConfigMessage: '',
+        sentenceConfigSuccess: true,
         // NMEA message type descriptions
         nmeaDescriptions: {
           'GPZDA': 'Date & Time',
@@ -953,6 +1048,103 @@
           }).catch(error => {
             console.error('Error updating message types:', error);
           });
+        },
+        
+        // Sentence configuration methods
+        async fetchSentences() {
+          try {
+            const response = await axios.get('/api/sentences');
+            this.sentences = response.data.sentences;
+            
+            // Initialize sentenceConfig with default values
+            this.sentences.forEach(sentence => {
+              if (!(sentence.id in this.sentenceConfig)) {
+                this.sentenceConfig[sentence.id] = sentence.default_enabled;
+              }
+            });
+          } catch (error) {
+            console.error('Error fetching sentences:', error);
+          }
+        },
+        async querySentenceConfig() {
+          this.sentenceQueryLoading = true;
+          this.sentenceConfigMessage = '';
+          try {
+            const response = await axios.post('/api/sentences/query');
+            if (response.data.success) {
+              // Update sentenceConfig with device values
+              const config = response.data.config;
+              for (const [id, settings] of Object.entries(config)) {
+                this.$set(this.sentenceConfig, id, settings.enabled);
+              }
+              this.sentenceConfigMessage = 'Configuration loaded from device';
+              this.sentenceConfigSuccess = true;
+            } else {
+              this.sentenceConfigMessage = response.data.message || 'Failed to query device';
+              this.sentenceConfigSuccess = false;
+            }
+          } catch (error) {
+            console.error('Error querying sentence config:', error);
+            this.sentenceConfigMessage = 'Error querying device';
+            this.sentenceConfigSuccess = false;
+          } finally {
+            this.sentenceQueryLoading = false;
+          }
+        },
+        async toggleSentence(sentenceId, enabled) {
+          try {
+            const response = await axios.post('/api/sentences/configure', {
+              sentence_id: sentenceId,
+              enabled: enabled
+            });
+            if (response.data.success) {
+              this.sentenceConfigMessage = response.data.message;
+              this.sentenceConfigSuccess = true;
+            } else {
+              this.sentenceConfigMessage = response.data.message || 'Failed to configure sentence';
+              this.sentenceConfigSuccess = false;
+              // Revert the toggle
+              this.$set(this.sentenceConfig, sentenceId, !enabled);
+            }
+          } catch (error) {
+            console.error('Error toggling sentence:', error);
+            this.sentenceConfigMessage = 'Error configuring sentence';
+            this.sentenceConfigSuccess = false;
+            // Revert the toggle
+            this.$set(this.sentenceConfig, sentenceId, !enabled);
+          }
+        },
+        async saveSentenceConfig() {
+          try {
+            const response = await axios.post('/api/sentences/save');
+            this.sentenceConfigMessage = response.data.message;
+            this.sentenceConfigSuccess = response.data.success;
+          } catch (error) {
+            console.error('Error saving sentence config:', error);
+            this.sentenceConfigMessage = 'Error saving configuration';
+            this.sentenceConfigSuccess = false;
+          }
+        },
+        async loadSentenceDefaults() {
+          if (!confirm('Load factory defaults? This will reset all sentence settings in RAM.')) {
+            return;
+          }
+          try {
+            const response = await axios.post('/api/sentences/load-defaults');
+            if (response.data.success) {
+              this.sentenceConfigMessage = response.data.message;
+              this.sentenceConfigSuccess = true;
+              // Refresh config from device
+              await this.querySentenceConfig();
+            } else {
+              this.sentenceConfigMessage = response.data.message || 'Failed to load defaults';
+              this.sentenceConfigSuccess = false;
+            }
+          } catch (error) {
+            console.error('Error loading sentence defaults:', error);
+            this.sentenceConfigMessage = 'Error loading defaults';
+            this.sentenceConfigSuccess = false;
+          }
         }
       },
       mounted() {
@@ -960,6 +1152,7 @@
         this.fetchConnectionStatus();
         this.fetchSerialInfo();
         this.checkStreamingStatus();
+        this.fetchSentences();
       },
       beforeDestroy() {
         this.stopPolling();
