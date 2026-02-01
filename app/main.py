@@ -1218,6 +1218,88 @@ def download_app_logs():
         }), 404
     return send_file(app_log_path, as_attachment=True)
 
+@app.route('/api/logs/info', methods=['GET'])
+def get_logs_info():
+    """Get information about log files"""
+    log_dir = Path('/app/logs')
+    logs = []
+    
+    for log_file in [nmea_handler.log_path, log_dir / 'nmea_handler.log']:
+        if log_file.exists():
+            stat = log_file.stat()
+            logs.append({
+                'name': log_file.name,
+                'path': str(log_file),
+                'size_bytes': stat.st_size,
+                'size_human': _format_size(stat.st_size),
+                'modified': datetime.datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                'modified_human': _format_time_ago(stat.st_mtime)
+            })
+        else:
+            logs.append({
+                'name': log_file.name,
+                'path': str(log_file),
+                'size_bytes': 0,
+                'size_human': '0 B',
+                'modified': None,
+                'modified_human': 'Not created'
+            })
+    
+    return jsonify({
+        'log_directory': str(log_dir),
+        'logs': logs
+    })
+
+@app.route('/api/logs/preview', methods=['GET'])
+def get_log_preview():
+    """Get the last N lines of a log file"""
+    log_type = request.args.get('type', 'nmea')  # 'nmea' or 'app'
+    lines = int(request.args.get('lines', 50))
+    
+    if log_type == 'nmea':
+        log_path = nmea_handler.log_path
+    else:
+        log_path = Path('/app/logs/nmea_handler.log')
+    
+    if not log_path.exists():
+        return jsonify({'lines': [], 'total_lines': 0})
+    
+    try:
+        with open(log_path, 'r') as f:
+            all_lines = f.readlines()
+            total = len(all_lines)
+            preview_lines = all_lines[-lines:] if total > lines else all_lines
+            return jsonify({
+                'lines': [line.rstrip() for line in preview_lines],
+                'total_lines': total,
+                'showing': len(preview_lines)
+            })
+    except Exception as e:
+        return jsonify({'error': str(e), 'lines': [], 'total_lines': 0})
+
+def _format_size(size_bytes):
+    """Format bytes to human readable size"""
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if size_bytes < 1024:
+            return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024
+    return f"{size_bytes:.1f} TB"
+
+def _format_time_ago(timestamp):
+    """Format timestamp to human readable time ago"""
+    now = datetime.datetime.now()
+    dt = datetime.datetime.fromtimestamp(timestamp)
+    diff = now - dt
+    
+    if diff.days > 0:
+        return f"{diff.days}d ago"
+    elif diff.seconds >= 3600:
+        return f"{diff.seconds // 3600}h ago"
+    elif diff.seconds >= 60:
+        return f"{diff.seconds // 60}m ago"
+    else:
+        return "Just now"
+
 @app.route('/api/stream/start', methods=['POST'])
 def start_streaming():
     """Start UDP streaming"""
