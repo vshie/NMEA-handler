@@ -11,6 +11,73 @@
   <script src="https://cdn.jsdelivr.net/npm/vuetify@2.x/dist/vuetify.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
   <style>
+    /* Dashboard tile styles */
+    .sensor-tile {
+      background: white;
+      border-radius: 8px;
+      padding: 16px;
+      height: 100%;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      position: relative;
+    }
+    .sensor-tile-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 8px;
+    }
+    .sensor-tile-title {
+      font-size: 12px;
+      font-weight: 500;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .sensor-tile-source {
+      background-color: #1976d2;
+      color: white;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 500;
+      font-family: monospace;
+    }
+    .sensor-tile-value {
+      font-size: 32px;
+      font-weight: 300;
+      color: #333;
+      line-height: 1.2;
+    }
+    .sensor-tile-unit {
+      font-size: 14px;
+      color: #666;
+      margin-left: 4px;
+    }
+    .sensor-tile-secondary {
+      font-size: 14px;
+      color: #666;
+      margin-top: 4px;
+    }
+    .sensor-tile-stale {
+      opacity: 0.5;
+    }
+    .sensor-tile-na {
+      color: #999;
+      font-style: italic;
+    }
+    
+    /* Wind display */
+    .wind-display {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .wind-direction {
+      font-size: 18px;
+      color: #666;
+    }
+    
+    /* Terminal/raw messages */
     .terminal {
       font-family: 'Roboto', sans-serif;
       background-color: #fafafa;
@@ -18,7 +85,7 @@
       border-radius: 4px;
       padding: 10px;
       margin: 10px 0;
-      height: 500px;
+      height: 400px;
       overflow-y: auto;
     }
     .message-card {
@@ -267,170 +334,456 @@
             </v-card-text>
           </v-card>
 
-          <!-- Terminal Output -->
-          <v-card class="mb-4">
-            <v-card-title>
-              NMEA Messages
-              <v-spacer></v-spacer>
-              <v-btn
-                color="primary"
-                @click="downloadLogs"
-                small
-                class="mr-2"
-              >
-                Download Logs
-              </v-btn>
-              <v-btn
-                color="error"
-                @click="confirmDeleteLogs"
-                small
-              >
-                Delete Logs
-              </v-btn>
-            </v-card-title>
-            <v-card-text>
-              <div class="terminal">
-                <div v-for="(message, index) in parsedMessages" :key="index" class="message-card">
-                  <div class="message-header">
-                    <div>
-                      <span class="message-type-badge">{{ message.type }}</span>
-                      <span class="message-description ml-2">{{ message.description }}</span>
-                    </div>
-                    <span class="text-caption grey--text">{{ formatTime(message.timestamp) }}</span>
-                  </div>
-                  <div class="parsed-values" v-if="message.values && message.values.length > 0">
-                    <div class="parsed-value" v-for="(val, vIndex) in message.values" :key="vIndex">
-                      <div class="parsed-value-label">{{ val.label }}</div>
-                      <div class="parsed-value-data">
-                        {{ val.value }}<span class="parsed-value-unit" v-if="val.unit">{{ val.unit }}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="raw-toggle" @click="message.showRaw = !message.showRaw">
-                    {{ message.showRaw ? 'Hide' : 'Show' }} raw data
-                  </div>
-                  <div class="raw-message" v-if="message.showRaw">{{ message.raw }}</div>
-                </div>
-                <div v-if="parsedMessages.length === 0" class="text-center pa-4">
-                  No messages received yet. Connect to a serial port to start receiving messages.
-                </div>
-              </div>
-            </v-card-text>
-          </v-card>
-
-          <!-- Message Types for Streaming -->
-          <v-card class="mb-4">
-            <v-card-title>Message Types to Stream</v-card-title>
-            <v-card-text>
-              <div class="message-types">
-                <v-row>
-                  <v-col cols="12" sm="6" md="4" v-for="(type, index) in availableMessageTypes" :key="index">
-                    <v-checkbox
-                      v-model="selectedMessageTypes"
-                      :label="type"
-                      :value="type"
-                      @change="updateMessageTypes"
-                      class="message-type-checkbox"
-                      dense
-                    ></v-checkbox>
-                  </v-col>
-                  <v-col cols="12" v-if="availableMessageTypes.length === 0">
-                    <div class="text-center pa-4">
-                      No message types detected yet. Connect to a device to see available message types.
-                    </div>
-                  </v-col>
-                </v-row>
-              </div>
-            </v-card-text>
-          </v-card>
-
-          <!-- Device Sentence Configuration -->
+          <!-- Main Content Tabs -->
           <v-card>
-            <v-card-title>
-              WX200 Sentence Configuration
+            <v-tabs v-model="activeTab" background-color="primary" dark>
+              <v-tab>
+                <v-icon left>mdi-view-dashboard</v-icon>
+                Dashboard
+              </v-tab>
+              <v-tab>
+                <v-icon left>mdi-console</v-icon>
+                Raw Messages
+              </v-tab>
+              <v-tab>
+                <v-icon left>mdi-cog</v-icon>
+                Sentences
+              </v-tab>
+              <v-tab>
+                <v-icon left>mdi-file-document</v-icon>
+                Logs
+              </v-tab>
               <v-spacer></v-spacer>
-              <v-btn
-                color="primary"
-                small
-                @click="querySentenceConfig"
-                :disabled="!connectionInfo.connected || sentenceQueryLoading"
-                class="mr-2"
-              >
-                <v-icon left small>mdi-refresh</v-icon>
-                Query Device
-              </v-btn>
-              <v-btn
-                color="success"
-                small
-                @click="saveSentenceConfig"
-                :disabled="!connectionInfo.connected"
-                class="mr-2"
-              >
-                <v-icon left small>mdi-content-save</v-icon>
-                Save to Device
-              </v-btn>
-              <v-btn
-                color="warning"
-                small
-                @click="loadSentenceDefaults"
-                :disabled="!connectionInfo.connected"
-              >
-                <v-icon left small>mdi-restore</v-icon>
-                Load Defaults
-              </v-btn>
-            </v-card-title>
-            <v-card-text>
-              <v-alert v-if="!connectionInfo.connected" type="info" dense class="mb-4">
-                Connect to a WX200 device to configure sentence output.
-              </v-alert>
-              
-              <v-alert v-if="sentenceConfigMessage" :type="sentenceConfigSuccess ? 'success' : 'error'" dense dismissible class="mb-4" @input="sentenceConfigMessage = ''">
-                {{ sentenceConfigMessage }}
-              </v-alert>
-              
-              <v-simple-table dense v-if="sentences.length > 0">
-                <template v-slot:default>
-                  <thead>
-                    <tr>
-                      <th class="text-left">ID</th>
-                      <th class="text-left">Name</th>
-                      <th class="text-left">Description</th>
-                      <th class="text-center">Enabled</th>
-                      <th class="text-center">Interval</th>
-                      <th class="text-center">Required</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="sentence in sentences" :key="sentence.id">
-                      <td><code>{{ sentence.id }}</code></td>
-                      <td>{{ sentence.name }}</td>
-                      <td class="text-caption">{{ sentence.description }}</td>
-                      <td class="text-center">
-                        <v-switch
-                          v-model="sentenceConfig[sentence.id]"
-                          :disabled="!connectionInfo.connected"
-                          @change="toggleSentence(sentence.id, $event)"
-                          dense
-                          hide-details
-                          class="mt-0"
-                        ></v-switch>
-                      </td>
-                      <td class="text-center">
-                        <span class="text-caption">{{ sentence.default_interval / 10 }}s</span>
-                      </td>
-                      <td class="text-center">
-                        <v-icon v-if="sentence.required" color="primary" small>mdi-check-circle</v-icon>
-                      </td>
-                    </tr>
-                  </tbody>
-                </template>
-              </v-simple-table>
-              
-              <div v-else class="text-center pa-4">
-                <v-progress-circular v-if="sentenceQueryLoading" indeterminate color="primary"></v-progress-circular>
-                <span v-else>Loading sentence configuration...</span>
+              <div class="d-flex align-center mr-4">
+                <v-btn-toggle v-model="unitSystem" mandatory dense class="mr-2">
+                  <v-btn small value="metric">Metric</v-btn>
+                  <v-btn small value="imperial">Imperial</v-btn>
+                </v-btn-toggle>
               </div>
-            </v-card-text>
+            </v-tabs>
+
+            <v-tabs-items v-model="activeTab">
+              <!-- Dashboard Tab -->
+              <v-tab-item>
+                <v-card-text>
+                  <v-alert v-if="!connectionInfo.connected" type="info" dense class="mb-4">
+                    Connect to a WX200 device to see sensor data.
+                  </v-alert>
+                  
+                  <!-- Wind Section -->
+                  <div class="text-overline mb-2">Wind</div>
+                  <v-row class="mb-4">
+                    <v-col cols="12" md="6">
+                      <div class="sensor-tile">
+                        <div class="sensor-tile-header">
+                          <span class="sensor-tile-title">Apparent Wind</span>
+                          <span class="sensor-tile-source" v-if="sensorData.wind_apparent.source">{{ sensorData.wind_apparent.source }}</span>
+                        </div>
+                        <div class="wind-display">
+                          <div>
+                            <span class="sensor-tile-value" :class="{'sensor-tile-na': !sensorData.wind_apparent.speed_kts}">
+                              {{ formatWindSpeed(sensorData.wind_apparent.speed_kts) }}
+                            </span>
+                            <span class="sensor-tile-unit">{{ windSpeedUnit }}</span>
+                          </div>
+                          <div class="wind-direction" v-if="sensorData.wind_apparent.angle !== null">
+                            {{ sensorData.wind_apparent.angle.toFixed(0) }}° 
+                            <span class="text-caption">(relative)</span>
+                          </div>
+                        </div>
+                      </div>
+                    </v-col>
+                    <v-col cols="12" md="6">
+                      <div class="sensor-tile">
+                        <div class="sensor-tile-header">
+                          <span class="sensor-tile-title">True Wind</span>
+                          <span class="sensor-tile-source" v-if="sensorData.wind_true.source">{{ sensorData.wind_true.source }}</span>
+                        </div>
+                        <div class="wind-display">
+                          <div>
+                            <span class="sensor-tile-value" :class="{'sensor-tile-na': !sensorData.wind_true.speed_kts}">
+                              {{ formatWindSpeed(sensorData.wind_true.speed_kts) }}
+                            </span>
+                            <span class="sensor-tile-unit">{{ windSpeedUnit }}</span>
+                          </div>
+                          <div class="wind-direction" v-if="sensorData.wind_true.direction_true !== null">
+                            {{ sensorData.wind_true.direction_true.toFixed(0) }}° T
+                          </div>
+                        </div>
+                      </div>
+                    </v-col>
+                  </v-row>
+
+                  <!-- Atmosphere Section -->
+                  <div class="text-overline mb-2">Atmosphere</div>
+                  <v-row class="mb-4">
+                    <v-col cols="6" md="3">
+                      <div class="sensor-tile">
+                        <div class="sensor-tile-header">
+                          <span class="sensor-tile-title">Temperature</span>
+                          <span class="sensor-tile-source" v-if="sensorData.atmosphere.source">{{ sensorData.atmosphere.source }}</span>
+                        </div>
+                        <span class="sensor-tile-value" :class="{'sensor-tile-na': sensorData.atmosphere.temperature_c === null}">
+                          {{ formatTemperature(sensorData.atmosphere.temperature_c) }}
+                        </span>
+                        <span class="sensor-tile-unit">{{ temperatureUnit }}</span>
+                      </div>
+                    </v-col>
+                    <v-col cols="6" md="3">
+                      <div class="sensor-tile">
+                        <div class="sensor-tile-header">
+                          <span class="sensor-tile-title">Humidity</span>
+                          <span class="sensor-tile-source" v-if="sensorData.atmosphere.source">{{ sensorData.atmosphere.source }}</span>
+                        </div>
+                        <span class="sensor-tile-value" :class="{'sensor-tile-na': sensorData.atmosphere.humidity_pct === null}">
+                          {{ sensorData.atmosphere.humidity_pct !== null ? sensorData.atmosphere.humidity_pct.toFixed(0) : '--' }}
+                        </span>
+                        <span class="sensor-tile-unit">%</span>
+                      </div>
+                    </v-col>
+                    <v-col cols="6" md="3">
+                      <div class="sensor-tile">
+                        <div class="sensor-tile-header">
+                          <span class="sensor-tile-title">Pressure</span>
+                          <span class="sensor-tile-source" v-if="sensorData.atmosphere.source">{{ sensorData.atmosphere.source }}</span>
+                        </div>
+                        <span class="sensor-tile-value" :class="{'sensor-tile-na': sensorData.atmosphere.pressure_bar === null}">
+                          {{ formatPressure(sensorData.atmosphere.pressure_bar) }}
+                        </span>
+                        <span class="sensor-tile-unit">{{ pressureUnit }}</span>
+                      </div>
+                    </v-col>
+                    <v-col cols="6" md="3">
+                      <div class="sensor-tile">
+                        <div class="sensor-tile-header">
+                          <span class="sensor-tile-title">Dew Point</span>
+                          <span class="sensor-tile-source" v-if="sensorData.atmosphere.source">{{ sensorData.atmosphere.source }}</span>
+                        </div>
+                        <span class="sensor-tile-value" :class="{'sensor-tile-na': sensorData.atmosphere.dew_point_c === null}">
+                          {{ formatTemperature(sensorData.atmosphere.dew_point_c) }}
+                        </span>
+                        <span class="sensor-tile-unit">{{ temperatureUnit }}</span>
+                      </div>
+                    </v-col>
+                  </v-row>
+
+                  <!-- Attitude Section -->
+                  <div class="text-overline mb-2">Attitude</div>
+                  <v-row class="mb-4">
+                    <v-col cols="6" md="3">
+                      <div class="sensor-tile">
+                        <div class="sensor-tile-header">
+                          <span class="sensor-tile-title">Heading</span>
+                          <span class="sensor-tile-source" v-if="sensorData.attitude.source">{{ sensorData.attitude.source }}</span>
+                        </div>
+                        <span class="sensor-tile-value" :class="{'sensor-tile-na': sensorData.attitude.heading_true === null}">
+                          {{ sensorData.attitude.heading_true !== null ? sensorData.attitude.heading_true.toFixed(0) : '--' }}
+                        </span>
+                        <span class="sensor-tile-unit">° T</span>
+                      </div>
+                    </v-col>
+                    <v-col cols="6" md="3">
+                      <div class="sensor-tile">
+                        <div class="sensor-tile-header">
+                          <span class="sensor-tile-title">Pitch</span>
+                          <span class="sensor-tile-source" v-if="sensorData.attitude.pitch_deg !== null">YXXDR</span>
+                        </div>
+                        <span class="sensor-tile-value" :class="{'sensor-tile-na': sensorData.attitude.pitch_deg === null}">
+                          {{ sensorData.attitude.pitch_deg !== null ? sensorData.attitude.pitch_deg.toFixed(1) : '--' }}
+                        </span>
+                        <span class="sensor-tile-unit">°</span>
+                      </div>
+                    </v-col>
+                    <v-col cols="6" md="3">
+                      <div class="sensor-tile">
+                        <div class="sensor-tile-header">
+                          <span class="sensor-tile-title">Roll</span>
+                          <span class="sensor-tile-source" v-if="sensorData.attitude.roll_deg !== null">YXXDR</span>
+                        </div>
+                        <span class="sensor-tile-value" :class="{'sensor-tile-na': sensorData.attitude.roll_deg === null}">
+                          {{ sensorData.attitude.roll_deg !== null ? sensorData.attitude.roll_deg.toFixed(1) : '--' }}
+                        </span>
+                        <span class="sensor-tile-unit">°</span>
+                      </div>
+                    </v-col>
+                    <v-col cols="6" md="3">
+                      <div class="sensor-tile">
+                        <div class="sensor-tile-header">
+                          <span class="sensor-tile-title">Rate of Turn</span>
+                          <span class="sensor-tile-source" v-if="sensorData.attitude.rate_of_turn !== null">TIROT</span>
+                        </div>
+                        <span class="sensor-tile-value" :class="{'sensor-tile-na': sensorData.attitude.rate_of_turn === null}">
+                          {{ sensorData.attitude.rate_of_turn !== null ? sensorData.attitude.rate_of_turn.toFixed(1) : '--' }}
+                        </span>
+                        <span class="sensor-tile-unit">°/min</span>
+                      </div>
+                    </v-col>
+                  </v-row>
+
+                  <!-- GPS Section -->
+                  <div class="text-overline mb-2">GPS</div>
+                  <v-row>
+                    <v-col cols="12" md="4">
+                      <div class="sensor-tile">
+                        <div class="sensor-tile-header">
+                          <span class="sensor-tile-title">Position</span>
+                          <span class="sensor-tile-source" v-if="sensorData.gps.source">{{ sensorData.gps.source }}</span>
+                        </div>
+                        <div :class="{'sensor-tile-na': sensorData.gps.latitude === null}">
+                          <div class="sensor-tile-value" style="font-size: 18px;">
+                            {{ sensorData.gps.latitude !== null ? sensorData.gps.latitude.toFixed(6) : '--' }}°
+                          </div>
+                          <div class="sensor-tile-value" style="font-size: 18px;">
+                            {{ sensorData.gps.longitude !== null ? sensorData.gps.longitude.toFixed(6) : '--' }}°
+                          </div>
+                        </div>
+                      </div>
+                    </v-col>
+                    <v-col cols="6" md="2">
+                      <div class="sensor-tile">
+                        <div class="sensor-tile-header">
+                          <span class="sensor-tile-title">Satellites</span>
+                        </div>
+                        <span class="sensor-tile-value" :class="{'sensor-tile-na': sensorData.gps.satellites === null}">
+                          {{ sensorData.gps.satellites !== null ? sensorData.gps.satellites : '--' }}
+                        </span>
+                      </div>
+                    </v-col>
+                    <v-col cols="6" md="2">
+                      <div class="sensor-tile">
+                        <div class="sensor-tile-header">
+                          <span class="sensor-tile-title">Fix</span>
+                        </div>
+                        <span class="sensor-tile-value" style="font-size: 16px;" :class="{'sensor-tile-na': !sensorData.gps.fix_quality}">
+                          {{ sensorData.gps.fix_quality || '--' }}
+                        </span>
+                      </div>
+                    </v-col>
+                    <v-col cols="6" md="2">
+                      <div class="sensor-tile">
+                        <div class="sensor-tile-header">
+                          <span class="sensor-tile-title">Speed</span>
+                        </div>
+                        <span class="sensor-tile-value" :class="{'sensor-tile-na': sensorData.gps.speed_kts === null}">
+                          {{ formatWindSpeed(sensorData.gps.speed_kts) }}
+                        </span>
+                        <span class="sensor-tile-unit">{{ windSpeedUnit }}</span>
+                      </div>
+                    </v-col>
+                    <v-col cols="6" md="2">
+                      <div class="sensor-tile">
+                        <div class="sensor-tile-header">
+                          <span class="sensor-tile-title">Course</span>
+                        </div>
+                        <span class="sensor-tile-value" :class="{'sensor-tile-na': sensorData.gps.course_true === null}">
+                          {{ sensorData.gps.course_true !== null ? sensorData.gps.course_true.toFixed(0) : '--' }}
+                        </span>
+                        <span class="sensor-tile-unit">°</span>
+                      </div>
+                    </v-col>
+                  </v-row>
+
+                  <!-- Time display -->
+                  <div class="text-center mt-4 text-caption grey--text" v-if="sensorData.time.utc_time">
+                    UTC: {{ sensorData.time.utc_date }} {{ sensorData.time.utc_time }}
+                  </div>
+                </v-card-text>
+              </v-tab-item>
+
+              <!-- Raw Messages Tab -->
+              <v-tab-item>
+                <v-card-text>
+                  <div class="terminal">
+                    <div v-for="(message, index) in parsedMessages" :key="index" class="message-card">
+                      <div class="message-header">
+                        <div>
+                          <span class="message-type-badge">{{ message.type }}</span>
+                          <span class="message-description ml-2">{{ message.description }}</span>
+                        </div>
+                        <span class="text-caption grey--text">{{ formatTime(message.timestamp) }}</span>
+                      </div>
+                      <div class="parsed-values" v-if="message.values && message.values.length > 0">
+                        <div class="parsed-value" v-for="(val, vIndex) in message.values" :key="vIndex">
+                          <div class="parsed-value-label">{{ val.label }}</div>
+                          <div class="parsed-value-data">
+                            {{ val.value }}<span class="parsed-value-unit" v-if="val.unit">{{ val.unit }}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="raw-toggle" @click="message.showRaw = !message.showRaw">
+                        {{ message.showRaw ? 'Hide' : 'Show' }} raw data
+                      </div>
+                      <div class="raw-message" v-if="message.showRaw">{{ message.raw }}</div>
+                    </div>
+                    <div v-if="parsedMessages.length === 0" class="text-center pa-4">
+                      No messages received yet. Connect to a serial port to start receiving messages.
+                    </div>
+                  </div>
+                  
+                  <!-- Message Types for Streaming -->
+                  <div class="text-overline mt-4 mb-2">Message Types to Stream</div>
+                  <div class="message-types">
+                    <v-row>
+                      <v-col cols="12" sm="6" md="4" v-for="(type, index) in availableMessageTypes" :key="index">
+                        <v-checkbox
+                          v-model="selectedMessageTypes"
+                          :label="type"
+                          :value="type"
+                          @change="updateMessageTypes"
+                          class="message-type-checkbox"
+                          dense
+                        ></v-checkbox>
+                      </v-col>
+                      <v-col cols="12" v-if="availableMessageTypes.length === 0">
+                        <div class="text-center pa-4 text-caption">
+                          No message types detected yet.
+                        </div>
+                      </v-col>
+                    </v-row>
+                  </div>
+                </v-card-text>
+              </v-tab-item>
+
+              <!-- Sentences Tab -->
+              <v-tab-item>
+                <v-card-text>
+                  <div class="d-flex mb-4">
+                    <v-btn
+                      color="primary"
+                      small
+                      @click="querySentenceConfig"
+                      :disabled="!connectionInfo.connected || sentenceQueryLoading"
+                      class="mr-2"
+                    >
+                      <v-icon left small>mdi-refresh</v-icon>
+                      Query Device
+                    </v-btn>
+                    <v-btn
+                      color="success"
+                      small
+                      @click="saveSentenceConfig"
+                      :disabled="!connectionInfo.connected"
+                      class="mr-2"
+                    >
+                      <v-icon left small>mdi-content-save</v-icon>
+                      Save to Device
+                    </v-btn>
+                    <v-btn
+                      color="warning"
+                      small
+                      @click="loadSentenceDefaults"
+                      :disabled="!connectionInfo.connected"
+                    >
+                      <v-icon left small>mdi-restore</v-icon>
+                      Load Defaults
+                    </v-btn>
+                  </div>
+                  
+                  <v-alert v-if="!connectionInfo.connected" type="info" dense class="mb-4">
+                    Connect to a WX200 device to configure sentence output.
+                  </v-alert>
+                  
+                  <v-alert v-if="sentenceConfigMessage" :type="sentenceConfigSuccess ? 'success' : 'error'" dense dismissible class="mb-4" @input="sentenceConfigMessage = ''">
+                    {{ sentenceConfigMessage }}
+                  </v-alert>
+                  
+                  <v-simple-table dense v-if="sentences.length > 0">
+                    <template v-slot:default>
+                      <thead>
+                        <tr>
+                          <th class="text-left">ID</th>
+                          <th class="text-left">Name</th>
+                          <th class="text-left">Description</th>
+                          <th class="text-center">Enabled</th>
+                          <th class="text-center">Interval</th>
+                          <th class="text-center">Required</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="sentence in sentences" :key="sentence.id">
+                          <td><code>{{ sentence.id }}</code></td>
+                          <td>{{ sentence.name }}</td>
+                          <td class="text-caption">{{ sentence.description }}</td>
+                          <td class="text-center">
+                            <v-switch
+                              v-model="sentenceConfig[sentence.id]"
+                              :disabled="!connectionInfo.connected"
+                              @change="toggleSentence(sentence.id, $event)"
+                              dense
+                              hide-details
+                              class="mt-0"
+                            ></v-switch>
+                          </td>
+                          <td class="text-center">
+                            <span class="text-caption">{{ sentence.default_interval / 10 }}s</span>
+                          </td>
+                          <td class="text-center">
+                            <v-icon v-if="sentence.required" color="primary" small>mdi-check-circle</v-icon>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </template>
+                  </v-simple-table>
+                  
+                  <div v-else class="text-center pa-4">
+                    <v-progress-circular v-if="sentenceQueryLoading" indeterminate color="primary"></v-progress-circular>
+                    <span v-else>Loading sentence configuration...</span>
+                  </div>
+                </v-card-text>
+              </v-tab-item>
+
+              <!-- Logs Tab -->
+              <v-tab-item>
+                <v-card-text>
+                  <v-alert type="info" dense class="mb-4">
+                    <v-icon left>mdi-folder</v-icon>
+                    Log directory: <code>/app/logs/</code>
+                    <div class="text-caption mt-1">Access via BlueOS File Browser</div>
+                  </v-alert>
+                  
+                  <v-row>
+                    <v-col cols="12" md="6">
+                      <v-card outlined>
+                        <v-card-title class="text-subtitle-1">
+                          <v-icon left>mdi-file-document-outline</v-icon>
+                          nmea_messages.log
+                        </v-card-title>
+                        <v-card-text>
+                          NMEA message history
+                        </v-card-text>
+                        <v-card-actions>
+                          <v-btn color="primary" small @click="downloadLogs">
+                            <v-icon left small>mdi-download</v-icon>
+                            Download
+                          </v-btn>
+                          <v-btn color="error" small @click="confirmDeleteLogs">
+                            <v-icon left small>mdi-delete</v-icon>
+                            Delete
+                          </v-btn>
+                        </v-card-actions>
+                      </v-card>
+                    </v-col>
+                    <v-col cols="12" md="6">
+                      <v-card outlined>
+                        <v-card-title class="text-subtitle-1">
+                          <v-icon left>mdi-file-document-outline</v-icon>
+                          nmea_handler.log
+                        </v-card-title>
+                        <v-card-text>
+                          Application debug log
+                        </v-card-text>
+                        <v-card-actions>
+                          <v-btn color="primary" small @click="downloadAppLogs">
+                            <v-icon left small>mdi-download</v-icon>
+                            Download
+                          </v-btn>
+                        </v-card-actions>
+                      </v-card>
+                    </v-col>
+                  </v-row>
+                </v-card-text>
+              </v-tab-item>
+            </v-tabs-items>
           </v-card>
         </v-container>
       </v-main>
@@ -474,6 +827,17 @@
         sentenceQueryLoading: false,
         sentenceConfigMessage: '',
         sentenceConfigSuccess: true,
+        // Dashboard
+        activeTab: 0,
+        unitSystem: 'metric',  // 'metric' or 'imperial'
+        sensorData: {
+          wind_apparent: { speed_kts: null, angle: null, source: null, timestamp: null },
+          wind_true: { speed_kts: null, angle: null, direction_true: null, direction_magnetic: null, source: null, timestamp: null },
+          atmosphere: { temperature_c: null, humidity_pct: null, pressure_bar: null, dew_point_c: null, source: null, timestamp: null },
+          attitude: { heading_true: null, heading_magnetic: null, pitch_deg: null, roll_deg: null, rate_of_turn: null, source: null, timestamp: null },
+          gps: { latitude: null, longitude: null, altitude_m: null, satellites: null, fix_quality: null, speed_kts: null, course_true: null, source: null, timestamp: null },
+          time: { utc_time: null, utc_date: null, source: null, timestamp: null }
+        },
         // NMEA message type descriptions
         nmeaDescriptions: {
           'GPZDA': 'Date & Time',
@@ -517,6 +881,22 @@
             'failed': 'Connection Failed'
           };
           return statusMap[this.connectionInfo.status] || this.connectionInfo.status;
+        },
+        // Unit labels
+        windSpeedUnit() {
+          return this.unitSystem === 'metric' ? 'm/s' : 'kts';
+        },
+        temperatureUnit() {
+          return this.unitSystem === 'metric' ? '°C' : '°F';
+        },
+        pressureUnit() {
+          return this.unitSystem === 'metric' ? 'hPa' : 'inHg';
+        }
+      },
+      watch: {
+        // Persist unit preference to localStorage
+        unitSystem(newVal) {
+          localStorage.setItem('wx200_unitSystem', newVal);
         }
       },
       methods: {
@@ -524,6 +904,49 @@
           if (!timestamp) return '';
           const date = new Date(timestamp);
           return date.toLocaleTimeString();
+        },
+        // Unit conversion methods
+        formatWindSpeed(kts) {
+          if (kts === null || kts === undefined) return '--';
+          if (this.unitSystem === 'metric') {
+            // Convert knots to m/s
+            return (kts * 0.5144).toFixed(1);
+          }
+          return kts.toFixed(1);
+        },
+        formatTemperature(celsius) {
+          if (celsius === null || celsius === undefined) return '--';
+          if (this.unitSystem === 'imperial') {
+            // Convert Celsius to Fahrenheit
+            return ((celsius * 9/5) + 32).toFixed(1);
+          }
+          return celsius.toFixed(1);
+        },
+        formatPressure(bar) {
+          if (bar === null || bar === undefined) return '--';
+          if (this.unitSystem === 'metric') {
+            // Convert bar to hPa
+            return (bar * 1000).toFixed(1);
+          }
+          // Convert bar to inHg
+          return (bar / 0.03386).toFixed(2);
+        },
+        async fetchSensorData() {
+          try {
+            const response = await axios.get('/api/sensor/state');
+            this.sensorData = response.data;
+          } catch (error) {
+            console.error('Error fetching sensor data:', error);
+          }
+        },
+        async downloadAppLogs() {
+          try {
+            // Download the application log file
+            window.location.href = '/api/logs/app';
+          } catch (error) {
+            console.error('Error downloading app logs:', error);
+            alert('Error downloading application logs.');
+          }
         },
         parseNMEA(raw, type) {
           try {
@@ -1034,6 +1457,7 @@
             this.readSerial();
             this.fetchConnectionStatus();
             this.checkStreamingStatus();
+            this.fetchSensorData();
           }, 1000);
         },
         stopPolling() {
@@ -1148,11 +1572,18 @@
         }
       },
       mounted() {
+        // Load unit preference from localStorage
+        const savedUnit = localStorage.getItem('wx200_unitSystem');
+        if (savedUnit) {
+          this.unitSystem = savedUnit;
+        }
+        
         this.fetchPorts();
         this.fetchConnectionStatus();
         this.fetchSerialInfo();
         this.checkStreamingStatus();
         this.fetchSentences();
+        this.fetchSensorData();
       },
       beforeDestroy() {
         this.stopPolling();

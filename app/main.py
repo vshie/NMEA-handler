@@ -89,6 +89,58 @@ class NMEAHandler:
             'selected_message_types': []
         }
         
+        # Aggregated sensor data for dashboard display
+        self.sensor_data = {
+            'wind_apparent': {
+                'speed_kts': None,
+                'angle': None,
+                'source': None,
+                'timestamp': None
+            },
+            'wind_true': {
+                'speed_kts': None,
+                'angle': None,  # Relative to vessel
+                'direction_true': None,  # Relative to north
+                'direction_magnetic': None,
+                'source': None,
+                'timestamp': None
+            },
+            'atmosphere': {
+                'temperature_c': None,
+                'humidity_pct': None,
+                'pressure_bar': None,
+                'dew_point_c': None,
+                'source': None,
+                'timestamp': None
+            },
+            'attitude': {
+                'heading_true': None,
+                'heading_magnetic': None,
+                'pitch_deg': None,
+                'roll_deg': None,
+                'rate_of_turn': None,
+                'source': None,
+                'timestamp': None
+            },
+            'gps': {
+                'latitude': None,
+                'longitude': None,
+                'altitude_m': None,
+                'satellites': None,
+                'fix_quality': None,
+                'speed_kts': None,
+                'course_true': None,
+                'source': None,
+                'timestamp': None
+            },
+            'time': {
+                'utc_time': None,
+                'utc_date': None,
+                'source': None,
+                'timestamp': None
+            }
+        }
+        
         # Thread control
         self.reader_thread = None
         self.should_stop = False
@@ -184,6 +236,9 @@ class NMEAHandler:
                         msg_type = data.split(',')[0][1:]  # Remove $ and get message type
                         self.nmea_messages.add(msg_type)
                         
+                        # Update aggregated sensor data
+                        self._parse_nmea_for_dashboard(data, msg_type)
+                        
                         # Add message to history
                         message = {
                             "raw": data,
@@ -202,6 +257,194 @@ class NMEAHandler:
                 except Exception as e:
                     self.app_logger.error(f"Error in serial reader thread: {e}")
             time.sleep(0.1)  # Small delay to prevent CPU overuse
+
+    def _parse_nmea_for_dashboard(self, raw_data, msg_type):
+        """
+        Parse NMEA message and update aggregated sensor data for dashboard.
+        """
+        try:
+            # Remove checksum if present
+            data = raw_data.split('*')[0]
+            fields = data.split(',')
+            timestamp = datetime.datetime.now().isoformat()
+            
+            # WIMWV - Wind Speed and Angle (Relative or True)
+            if msg_type == 'WIMWV':
+                # $WIMWV,angle,R/T,speed,unit,status*CC
+                if len(fields) >= 6 and fields[5] == 'A':  # Valid data
+                    angle = float(fields[1]) if fields[1] else None
+                    speed = float(fields[3]) if fields[3] else None
+                    reference = fields[2]  # R=Relative, T=True/Theoretical
+                    
+                    if reference == 'R':
+                        self.sensor_data['wind_apparent']['angle'] = angle
+                        self.sensor_data['wind_apparent']['speed_kts'] = speed
+                        self.sensor_data['wind_apparent']['source'] = 'WIMWV'
+                        self.sensor_data['wind_apparent']['timestamp'] = timestamp
+                    elif reference == 'T':
+                        self.sensor_data['wind_true']['angle'] = angle
+                        self.sensor_data['wind_true']['speed_kts'] = speed
+                        self.sensor_data['wind_true']['source'] = 'WIMWV'
+                        self.sensor_data['wind_true']['timestamp'] = timestamp
+            
+            # WIMWD - Wind Direction and Speed (True, relative to north)
+            elif msg_type == 'WIMWD':
+                # $WIMWD,dir_true,T,dir_mag,M,speed_kts,N,speed_ms,M*CC
+                if len(fields) >= 8:
+                    dir_true = float(fields[1]) if fields[1] else None
+                    dir_mag = float(fields[3]) if fields[3] else None
+                    speed_kts = float(fields[5]) if fields[5] else None
+                    
+                    self.sensor_data['wind_true']['direction_true'] = dir_true
+                    self.sensor_data['wind_true']['direction_magnetic'] = dir_mag
+                    if speed_kts is not None:
+                        self.sensor_data['wind_true']['speed_kts'] = speed_kts
+                    self.sensor_data['wind_true']['source'] = 'WIMWD'
+                    self.sensor_data['wind_true']['timestamp'] = timestamp
+            
+            # WIMDA - Meteorological Composite
+            elif msg_type == 'WIMDA':
+                # $WIMDA,baro_in,I,baro_bar,B,air_temp,C,water_temp,C,humidity,%,dew_point,C,...
+                if len(fields) >= 12:
+                    pressure_bar = float(fields[3]) if fields[3] else None
+                    temp_c = float(fields[5]) if fields[5] else None
+                    humidity = float(fields[9]) if fields[9] else None
+                    dew_point = float(fields[11]) if fields[11] else None
+                    
+                    self.sensor_data['atmosphere']['pressure_bar'] = pressure_bar
+                    self.sensor_data['atmosphere']['temperature_c'] = temp_c
+                    self.sensor_data['atmosphere']['humidity_pct'] = humidity
+                    self.sensor_data['atmosphere']['dew_point_c'] = dew_point
+                    self.sensor_data['atmosphere']['source'] = 'WIMDA'
+                    self.sensor_data['atmosphere']['timestamp'] = timestamp
+            
+            # HCHDT - Heading True
+            elif msg_type == 'HCHDT':
+                # $HCHDT,heading,T*CC
+                if len(fields) >= 2 and fields[1]:
+                    heading = float(fields[1])
+                    self.sensor_data['attitude']['heading_true'] = heading
+                    self.sensor_data['attitude']['source'] = 'HCHDT'
+                    self.sensor_data['attitude']['timestamp'] = timestamp
+            
+            # HCHDG - Heading Magnetic
+            elif msg_type == 'HCHDG':
+                # $HCHDG,heading,dev,E/W,var,E/W*CC
+                if len(fields) >= 2 and fields[1]:
+                    heading = float(fields[1])
+                    self.sensor_data['attitude']['heading_magnetic'] = heading
+                    if self.sensor_data['attitude']['source'] != 'HCHDT':
+                        self.sensor_data['attitude']['source'] = 'HCHDG'
+                        self.sensor_data['attitude']['timestamp'] = timestamp
+            
+            # YXXDR - Transducer Measurements (Pitch/Roll from type B)
+            elif msg_type == 'YXXDR':
+                # Parse in groups of 4: type, value, unit, name
+                i = 1
+                while i + 3 < len(fields):
+                    name = fields[i + 3] if i + 3 < len(fields) else ''
+                    value = fields[i + 1] if i + 1 < len(fields) and fields[i + 1] else None
+                    
+                    if value is not None:
+                        value = float(value)
+                        if name == 'PTCH':
+                            self.sensor_data['attitude']['pitch_deg'] = value
+                            self.sensor_data['attitude']['source'] = 'YXXDR'
+                            self.sensor_data['attitude']['timestamp'] = timestamp
+                        elif name == 'ROLL':
+                            self.sensor_data['attitude']['roll_deg'] = value
+                            self.sensor_data['attitude']['source'] = 'YXXDR'
+                            self.sensor_data['attitude']['timestamp'] = timestamp
+                    i += 4
+            
+            # TIROT - Rate of Turn
+            elif msg_type == 'TIROT':
+                # $TIROT,rate,status*CC
+                if len(fields) >= 3 and fields[2] == 'A' and fields[1]:
+                    rate = float(fields[1])
+                    self.sensor_data['attitude']['rate_of_turn'] = rate
+                    if 'source' not in self.sensor_data['attitude'] or self.sensor_data['attitude']['source'] not in ['HCHDT', 'YXXDR']:
+                        self.sensor_data['attitude']['source'] = 'TIROT'
+                        self.sensor_data['attitude']['timestamp'] = timestamp
+            
+            # GPGGA - GPS Fix Data
+            elif msg_type == 'GPGGA':
+                # $GPGGA,time,lat,N/S,lon,E/W,quality,sats,hdop,alt,M,...
+                if len(fields) >= 10:
+                    lat = self._parse_nmea_coord(fields[2], fields[3]) if fields[2] else None
+                    lon = self._parse_nmea_coord(fields[4], fields[5]) if fields[4] else None
+                    fix_quality = int(fields[6]) if fields[6] else 0
+                    satellites = int(fields[7]) if fields[7] else None
+                    altitude = float(fields[9]) if fields[9] else None
+                    
+                    quality_names = {0: 'Invalid', 1: 'GPS Fix', 2: 'DGPS', 4: 'RTK Fixed', 5: 'RTK Float'}
+                    
+                    self.sensor_data['gps']['latitude'] = lat
+                    self.sensor_data['gps']['longitude'] = lon
+                    self.sensor_data['gps']['fix_quality'] = quality_names.get(fix_quality, str(fix_quality))
+                    self.sensor_data['gps']['satellites'] = satellites
+                    self.sensor_data['gps']['altitude_m'] = altitude
+                    self.sensor_data['gps']['source'] = 'GPGGA'
+                    self.sensor_data['gps']['timestamp'] = timestamp
+            
+            # GPVTG - Course Over Ground and Ground Speed
+            elif msg_type == 'GPVTG':
+                # $GPVTG,track_true,T,track_mag,M,speed_kts,N,speed_kmh,K,mode*CC
+                if len(fields) >= 6:
+                    course = float(fields[1]) if fields[1] else None
+                    speed_kts = float(fields[5]) if fields[5] else None
+                    
+                    self.sensor_data['gps']['course_true'] = course
+                    self.sensor_data['gps']['speed_kts'] = speed_kts
+                    if self.sensor_data['gps']['source'] != 'GPGGA':
+                        self.sensor_data['gps']['source'] = 'GPVTG'
+                        self.sensor_data['gps']['timestamp'] = timestamp
+            
+            # GPZDA - Time and Date
+            elif msg_type == 'GPZDA':
+                # $GPZDA,hhmmss,dd,mm,yyyy,tz_h,tz_m*CC
+                if len(fields) >= 5:
+                    time_str = fields[1]
+                    day = fields[2]
+                    month = fields[3]
+                    year = fields[4]
+                    
+                    if time_str and len(time_str) >= 6:
+                        utc_time = f"{time_str[0:2]}:{time_str[2:4]}:{time_str[4:6]}"
+                        self.sensor_data['time']['utc_time'] = utc_time
+                    
+                    if day and month and year:
+                        utc_date = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+                        self.sensor_data['time']['utc_date'] = utc_date
+                    
+                    self.sensor_data['time']['source'] = 'GPZDA'
+                    self.sensor_data['time']['timestamp'] = timestamp
+                    
+        except Exception as e:
+            # Silently ignore parse errors to not spam logs
+            pass
+
+    def _parse_nmea_coord(self, coord_str, direction):
+        """Convert NMEA coordinate (DDMM.MMMM) to decimal degrees."""
+        if not coord_str:
+            return None
+        try:
+            # Find decimal point position
+            dot_pos = coord_str.index('.')
+            degrees = int(coord_str[:dot_pos - 2])
+            minutes = float(coord_str[dot_pos - 2:])
+            decimal = degrees + (minutes / 60)
+            
+            if direction in ['S', 'W']:
+                decimal = -decimal
+            
+            return round(decimal, 6)
+        except:
+            return None
+
+    def get_sensor_data(self):
+        """Return the current aggregated sensor data for dashboard."""
+        return self.sensor_data
 
     def start_streaming(self):
         """Start UDP streaming"""
@@ -877,6 +1120,11 @@ def get_connection_status():
     """Get detailed connection status information"""
     return jsonify(nmea_handler.get_connection_info())
 
+@app.route('/api/sensor/state', methods=['GET'])
+def get_sensor_state():
+    """Get aggregated sensor data for dashboard display"""
+    return jsonify(nmea_handler.get_sensor_data())
+
 # ============== Sentence Configuration API ==============
 
 @app.route('/api/sentences', methods=['GET'])
@@ -958,6 +1206,17 @@ def delete_logs():
         return jsonify({"success": True, "message": "Logs deleted successfully"})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
+
+@app.route('/api/logs/app', methods=['GET'])
+def download_app_logs():
+    """Download application log file"""
+    app_log_path = Path('/app/logs/nmea_handler.log')
+    if not app_log_path.exists():
+        return jsonify({
+            "success": False,
+            "message": "No application log file found."
+        }), 404
+    return send_file(app_log_path, as_attachment=True)
 
 @app.route('/api/stream/start', methods=['POST'])
 def start_streaming():
