@@ -603,6 +603,30 @@ class NMEAHandler:
         
         return ports
 
+    def get_device_ids(self):
+        """Get mapping of /dev/serial/by-id/ names to their device paths (e.g., /dev/ttyUSB0)"""
+        devices = []
+        try:
+            serial_by_id = Path('/dev/serial/by-id')
+            if serial_by_id.exists() and serial_by_id.is_dir():
+                for link in serial_by_id.iterdir():
+                    try:
+                        if link.is_symlink():
+                            real_device = str(link.resolve())
+                            by_id_name = link.name
+                            # Clean up name for display
+                            display_name = by_id_name.replace('usb-', '').replace('-if00-port0', '').replace('_', ' ')
+                            devices.append({
+                                'device': real_device,
+                                'by_id_name': by_id_name,
+                                'display_name': display_name
+                            })
+                    except Exception as e:
+                        self.app_logger.error(f"Error reading symlink {link}: {e}")
+        except Exception as e:
+            self.app_logger.error(f"Error reading /dev/serial/by-id: {e}")
+        return devices
+
     def _try_baud_rate(self, port, baud_rate, timeout=3):
         """
         Try to connect at a specific baud rate and wait for valid NMEA data.
@@ -1147,6 +1171,11 @@ def ui():
 def get_ports():
     """Get list of available serial ports"""
     return jsonify({"ports": nmea_handler.get_ports()})
+
+@app.route('/api/serial/device-ids', methods=['GET'])
+def get_device_ids():
+    """Get device ID mappings from /dev/serial/by-id/"""
+    return jsonify({"devices": nmea_handler.get_device_ids()})
 
 @app.route('/api/serial/select', methods=['POST'])
 def select_port():

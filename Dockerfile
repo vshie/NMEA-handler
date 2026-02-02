@@ -54,6 +54,7 @@ LABEL permissions='\
     "CpuQuota": 100000,\
     "Binds": [\
       "/usr/blueos/extensions/nmea-handler:/app/logs",\
+      "/dev/serial:/dev/serial",\
       "/dev/ttyUSB0:/dev/ttyUSB0",\
       "/dev/ttyUSB1:/dev/ttyUSB1",\
       "/dev/ttyUSB2:/dev/ttyUSB2",\
