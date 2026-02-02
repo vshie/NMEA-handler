@@ -1006,7 +1006,7 @@ class NMEAHandler:
             'port': self.serial_connection.port if is_connected else None,
             'baud_rate': self.serial_connection.baudrate if is_connected else 0,
             'detected_baud': self.detected_baud,
-            'required_sentences': list(self.REQUIRED_SENTENCES.keys()),
+            'required_sentences': list(self.REQUIRED_SENTENCES),
         }
 
     def read_serial(self):
