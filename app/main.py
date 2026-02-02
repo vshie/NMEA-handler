@@ -608,9 +608,13 @@ class NMEAHandler:
         devices = []
         try:
             serial_by_id = Path('/dev/serial/by-id')
+            self.app_logger.info(f"Checking /dev/serial/by-id - exists: {serial_by_id.exists()}")
             if serial_by_id.exists() and serial_by_id.is_dir():
-                for link in serial_by_id.iterdir():
+                entries = list(serial_by_id.iterdir())
+                self.app_logger.info(f"Found {len(entries)} entries in /dev/serial/by-id")
+                for link in entries:
                     try:
+                        self.app_logger.info(f"Processing: {link.name}, is_symlink: {link.is_symlink()}")
                         if link.is_symlink():
                             real_device = str(link.resolve())
                             by_id_name = link.name
@@ -621,10 +625,14 @@ class NMEAHandler:
                                 'by_id_name': by_id_name,
                                 'display_name': display_name
                             })
+                            self.app_logger.info(f"Added device: {real_device} -> {display_name}")
                     except Exception as e:
                         self.app_logger.error(f"Error reading symlink {link}: {e}")
+            else:
+                self.app_logger.warning(f"/dev/serial/by-id does not exist or is not a directory")
         except Exception as e:
             self.app_logger.error(f"Error reading /dev/serial/by-id: {e}")
+        self.app_logger.info(f"Returning {len(devices)} devices")
         return devices
 
     def _try_baud_rate(self, port, baud_rate, timeout=3):
