@@ -641,12 +641,13 @@ class NMEAHandler:
                             
                             # Get USB port info from by-path map
                             path_info = by_path_map.get(real_device, {})
+                            usb_port = path_info.get('usb_port', {'position': 'unknown', 'label': 'Unknown', 'type': 'unknown'})
                             
                             devices.append({
                                 'device': real_device,
                                 'by_id_name': by_id_name,
                                 'display_name': display_name,
-                                'usb_port': path_info.get('usb_port', 'Unknown'),
+                                'usb_port': usb_port,
                                 'path_name': path_info.get('path_name', '')
                             })
                     except Exception as e:
@@ -660,39 +661,41 @@ class NMEAHandler:
 
     def _parse_usb_port(self, path_name):
         """
-        Parse the by-path name to determine physical USB port.
+        Parse the by-path name to determine physical USB port position.
         
-        Raspberry Pi 4/5 USB topology:
-        - usb-0:1.1.x = USB 2.0 ports (active hub)
-        - usb-0:1.2 = USB 3.0 bottom-left
-        - usb-0:1.3 = USB 3.0 bottom-right  
-        - usb-0:1.4 = USB 3.0 top-left (Pi 5)
-        
-        The pattern is: platform-...-usb-0:X.Y.Z:interface-port0
+        Raspberry Pi 4 USB layout (viewing ports head-on, ethernet on left):
+        +-------------+-------------+
+        |  top-left   |  top-right  |   <- USB 2.0 ports
+        |   (1.1.2)   |   (1.1.3)   |
+        +-------------+-------------+
+        | bottom-left | bottom-right|   <- USB 3.0 ports
+        |    (1.2)    |    (1.3)    |
+        +-------------+-------------+
         """
         try:
-            # Extract the USB path portion (e.g., "0:1.3:1.0")
             import re
             match = re.search(r'usb-(\d+:\d+(?:\.\d+)*):(\d+\.\d+)', path_name)
             if match:
-                bus_path = match.group(1)  # e.g., "0:1.3" or "0:1.1.4"
+                bus_path = match.group(1)
                 
-                # Determine port based on path
-                if ':1.1.' in bus_path or bus_path.endswith(':1.1'):
-                    # USB 2.0 hub ports
-                    return 'USB 2.0 Hub'
-                elif ':1.2' in bus_path:
-                    return 'USB 3.0 #1'
-                elif ':1.3' in bus_path:
-                    return 'USB 3.0 #2'
-                elif ':1.4' in bus_path:
-                    return 'USB 3.0 #3'
+                # Raspberry Pi 4 mapping
+                if ':1.1.2' in bus_path:
+                    return {'position': 'top-left', 'label': 'USB 2.0', 'type': 'usb2'}
+                elif ':1.1.3' in bus_path:
+                    return {'position': 'top-right', 'label': 'USB 2.0', 'type': 'usb2'}
+                elif bus_path.endswith(':1.2') or ':1.2:' in bus_path:
+                    return {'position': 'bottom-left', 'label': 'USB 3.0', 'type': 'usb3'}
+                elif bus_path.endswith(':1.3') or ':1.3:' in bus_path:
+                    return {'position': 'bottom-right', 'label': 'USB 3.0', 'type': 'usb3'}
+                elif ':1.1.' in bus_path:
+                    # Generic USB 2.0 hub - default to top-left
+                    return {'position': 'top-left', 'label': 'USB 2.0', 'type': 'usb2'}
                 else:
-                    return f'USB ({bus_path})'
-            return 'Unknown'
+                    return {'position': 'unknown', 'label': bus_path, 'type': 'unknown'}
+            return {'position': 'unknown', 'label': 'Unknown', 'type': 'unknown'}
         except Exception as e:
             self.app_logger.error(f"Error parsing USB port from {path_name}: {e}")
-            return 'Unknown'
+            return {'position': 'unknown', 'label': 'Unknown', 'type': 'unknown'}
 
     def _try_baud_rate(self, port, baud_rate, timeout=3):
         """

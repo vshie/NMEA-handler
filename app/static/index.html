@@ -187,6 +187,60 @@
       border-radius: 3px;
       font-size: 11px;
     }
+    .device-row {
+      cursor: pointer;
+      transition: background-color 0.15s;
+    }
+    .device-row:hover {
+      background-color: #e3f2fd !important;
+    }
+    /* USB Port Visual Grid */
+    .usb-port-visual {
+      flex-shrink: 0;
+    }
+    .usb-port-grid {
+      border: 2px solid #424242;
+      border-radius: 4px;
+      overflow: hidden;
+      width: 80px;
+    }
+    .usb-port-row {
+      display: flex;
+    }
+    .usb-port-cell {
+      width: 40px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #bdbdbd;
+      transition: all 0.15s ease;
+    }
+    .usb-port-cell.usb2 {
+      background-color: #fff3e0;
+    }
+    .usb-port-cell.usb3 {
+      background-color: #e3f2fd;
+    }
+    .usb-port-cell.highlighted {
+      transform: scale(1.05);
+      z-index: 1;
+      box-shadow: 0 0 8px rgba(25, 118, 210, 0.8);
+    }
+    .usb-port-cell.usb2.highlighted {
+      background-color: #ff9800;
+    }
+    .usb-port-cell.usb3.highlighted {
+      background-color: #2196f3;
+    }
+    .usb-port-cell .port-type {
+      font-size: 10px;
+      font-weight: 500;
+      color: #666;
+    }
+    .usb-port-cell.highlighted .port-type {
+      color: white;
+    }
     .message-types {
       margin-top: 20px;
       padding: 10px;
@@ -296,28 +350,50 @@
                     </div>
                   </v-expansion-panel-header>
                   <v-expansion-panel-content>
-                    <v-simple-table v-if="deviceIds.length > 0" dense class="device-id-table">
-                      <template v-slot:default>
-                        <thead>
-                          <tr>
-                            <th class="text-left">Port</th>
-                            <th class="text-left">Device</th>
-                            <th class="text-left">USB Location</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr v-for="(item, index) in deviceIds" :key="index">
-                            <td class="py-1"><code>{{ item.device }}</code></td>
-                            <td class="py-1">{{ item.display_name }}</td>
-                            <td class="py-1">
-                              <v-chip x-small label :color="getUsbPortColor(item.usb_port)">
-                                {{ item.usb_port }}
-                              </v-chip>
-                            </td>
-                          </tr>
-                        </tbody>
-                      </template>
-                    </v-simple-table>
+                    <div v-if="deviceIds.length > 0" class="d-flex align-start">
+                      <!-- USB Port Visual (2x2 grid) -->
+                      <div class="usb-port-visual mr-4">
+                        <div class="usb-port-label text-caption grey--text mb-1">USB Ports</div>
+                        <div class="usb-port-grid">
+                          <div class="usb-port-row">
+                            <div class="usb-port-cell usb2" :class="{ 'highlighted': hoveredUsbPosition === 'top-left' }">
+                              <span class="port-type">2.0</span>
+                            </div>
+                            <div class="usb-port-cell usb2" :class="{ 'highlighted': hoveredUsbPosition === 'top-right' }">
+                              <span class="port-type">2.0</span>
+                            </div>
+                          </div>
+                          <div class="usb-port-row">
+                            <div class="usb-port-cell usb3" :class="{ 'highlighted': hoveredUsbPosition === 'bottom-left' }">
+                              <span class="port-type">3.0</span>
+                            </div>
+                            <div class="usb-port-cell usb3" :class="{ 'highlighted': hoveredUsbPosition === 'bottom-right' }">
+                              <span class="port-type">3.0</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <!-- Device List -->
+                      <v-simple-table dense class="device-id-table flex-grow-1">
+                        <template v-slot:default>
+                          <thead>
+                            <tr>
+                              <th class="text-left">Port</th>
+                              <th class="text-left">Device</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr v-for="(item, index) in deviceIds" :key="index"
+                                @mouseenter="hoveredUsbPosition = item.usb_port.position"
+                                @mouseleave="hoveredUsbPosition = null"
+                                class="device-row">
+                              <td class="py-1"><code>{{ item.device }}</code></td>
+                              <td class="py-1">{{ item.display_name }}</td>
+                            </tr>
+                          </tbody>
+                        </template>
+                      </v-simple-table>
+                    </div>
                     <div v-else class="text-caption grey--text pa-2">
                       No serial devices detected in /dev/serial/by-id/
                     </div>
@@ -1054,6 +1130,7 @@
         messages: [],
         availablePorts: [],
         deviceIds: [],
+        hoveredUsbPosition: null,
         selectedPort: null,
         serialPortInfo: { serial_port: 'Not connected', baud_rate: 0 },
         availableMessageTypes: [],
