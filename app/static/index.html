@@ -351,27 +351,28 @@
                   </v-expansion-panel-header>
                   <v-expansion-panel-content>
                     <div v-if="deviceIds.length > 0" class="d-flex align-start">
-                      <!-- USB Port Visual (2x2 grid) -->
+                      <!-- USB Port Visual (2x2 grid) - Left=USB2.0, Right=USB3.0 -->
                       <div class="usb-port-visual mr-4">
-                        <div class="usb-port-label text-caption grey--text mb-1">USB Ports</div>
+                        <div class="usb-port-label text-caption grey--text mb-1 text-center">USB Ports</div>
                         <div class="usb-port-grid">
                           <div class="usb-port-row">
                             <div class="usb-port-cell usb2" :class="{ 'highlighted': hoveredUsbPosition === 'top-left' }">
                               <span class="port-type">2.0</span>
                             </div>
-                            <div class="usb-port-cell usb2" :class="{ 'highlighted': hoveredUsbPosition === 'top-right' }">
-                              <span class="port-type">2.0</span>
+                            <div class="usb-port-cell usb3" :class="{ 'highlighted': hoveredUsbPosition === 'top-right' }">
+                              <span class="port-type">3.0</span>
                             </div>
                           </div>
                           <div class="usb-port-row">
-                            <div class="usb-port-cell usb3" :class="{ 'highlighted': hoveredUsbPosition === 'bottom-left' }">
-                              <span class="port-type">3.0</span>
+                            <div class="usb-port-cell usb2" :class="{ 'highlighted': hoveredUsbPosition === 'bottom-left' || hoveredUsbPosition === 'left' }">
+                              <span class="port-type">2.0</span>
                             </div>
                             <div class="usb-port-cell usb3" :class="{ 'highlighted': hoveredUsbPosition === 'bottom-right' }">
                               <span class="port-type">3.0</span>
                             </div>
                           </div>
                         </div>
+                        <div class="text-caption grey--text mt-1 text-center" style="font-size:9px">← ETH</div>
                       </div>
                       <!-- Device List -->
                       <v-simple-table dense class="device-id-table flex-grow-1">
@@ -380,15 +381,17 @@
                             <tr>
                               <th class="text-left">Port</th>
                               <th class="text-left">Device</th>
+                              <th class="text-left">USB Path</th>
                             </tr>
                           </thead>
                           <tbody>
                             <tr v-for="(item, index) in deviceIds" :key="index"
-                                @mouseenter="hoveredUsbPosition = item.usb_port.position"
+                                @mouseenter="hoveredUsbPosition = item.usb_port ? item.usb_port.position : null"
                                 @mouseleave="hoveredUsbPosition = null"
                                 class="device-row">
                               <td class="py-1"><code>{{ item.device }}</code></td>
                               <td class="py-1">{{ item.display_name }}</td>
+                              <td class="py-1 text-caption grey--text">{{ item.usb_port ? item.usb_port.bus : '' }}</td>
                             </tr>
                           </tbody>
                         </template>

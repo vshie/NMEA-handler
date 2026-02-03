@@ -665,37 +665,40 @@ class NMEAHandler:
         
         Raspberry Pi 4 USB layout (viewing ports head-on, ethernet on left):
         +-------------+-------------+
-        |  top-left   |  top-right  |   <- USB 2.0 ports
-        |   (1.1.2)   |   (1.1.3)   |
+        |  USB 2.0    |  USB 3.0    |   <- top row
+        |  (1.1.2)    |   (1.2)     |
         +-------------+-------------+
-        | bottom-left | bottom-right|   <- USB 3.0 ports
-        |    (1.2)    |    (1.3)    |
+        |  USB 2.0    |  USB 3.0    |   <- bottom row
+        |  (1.1.3)    |   (1.3)     |
         +-------------+-------------+
+           LEFT COL     RIGHT COL
         """
         try:
             import re
             match = re.search(r'usb-(\d+:\d+(?:\.\d+)*):(\d+\.\d+)', path_name)
             if match:
                 bus_path = match.group(1)
+                self.app_logger.info(f"Parsing USB path: {path_name} -> bus_path: {bus_path}")
                 
-                # Raspberry Pi 4 mapping
+                # Raspberry Pi 4 mapping - LEFT column is USB 2.0, RIGHT column is USB 3.0
                 if ':1.1.2' in bus_path:
-                    return {'position': 'top-left', 'label': 'USB 2.0', 'type': 'usb2'}
+                    return {'position': 'top-left', 'label': 'USB 2.0 Top', 'type': 'usb2', 'bus': bus_path}
                 elif ':1.1.3' in bus_path:
-                    return {'position': 'top-right', 'label': 'USB 2.0', 'type': 'usb2'}
+                    return {'position': 'bottom-left', 'label': 'USB 2.0 Bottom', 'type': 'usb2', 'bus': bus_path}
                 elif bus_path.endswith(':1.2') or ':1.2:' in bus_path:
-                    return {'position': 'bottom-left', 'label': 'USB 3.0', 'type': 'usb3'}
+                    return {'position': 'top-right', 'label': 'USB 3.0 Top', 'type': 'usb3', 'bus': bus_path}
                 elif bus_path.endswith(':1.3') or ':1.3:' in bus_path:
-                    return {'position': 'bottom-right', 'label': 'USB 3.0', 'type': 'usb3'}
+                    return {'position': 'bottom-right', 'label': 'USB 3.0 Bottom', 'type': 'usb3', 'bus': bus_path}
                 elif ':1.1.' in bus_path:
-                    # Generic USB 2.0 hub - default to top-left
-                    return {'position': 'top-left', 'label': 'USB 2.0', 'type': 'usb2'}
+                    # Generic USB 2.0 hub - log for debugging
+                    self.app_logger.info(f"Generic USB 2.0 hub path: {bus_path}")
+                    return {'position': 'left', 'label': 'USB 2.0', 'type': 'usb2', 'bus': bus_path}
                 else:
-                    return {'position': 'unknown', 'label': bus_path, 'type': 'unknown'}
-            return {'position': 'unknown', 'label': 'Unknown', 'type': 'unknown'}
+                    return {'position': 'unknown', 'label': bus_path, 'type': 'unknown', 'bus': bus_path}
+            return {'position': 'unknown', 'label': 'Unknown', 'type': 'unknown', 'bus': ''}
         except Exception as e:
             self.app_logger.error(f"Error parsing USB port from {path_name}: {e}")
-            return {'position': 'unknown', 'label': 'Unknown', 'type': 'unknown'}
+            return {'position': 'unknown', 'label': 'Unknown', 'type': 'unknown', 'bus': ''}
 
     def _try_baud_rate(self, port, baud_rate, timeout=3):
         """
