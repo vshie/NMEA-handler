@@ -604,36 +604,95 @@ class NMEAHandler:
         return ports
 
     def get_device_ids(self):
-        """Get mapping of /dev/serial/by-id/ names to their device paths (e.g., /dev/ttyUSB0)"""
+        """Get mapping of /dev/serial/by-id/ names to their device paths with USB port info"""
         devices = []
+        
+        # First, build a map of device -> by-path info for USB port location
+        by_path_map = {}
+        try:
+            serial_by_path = Path('/dev/serial/by-path')
+            if serial_by_path.exists() and serial_by_path.is_dir():
+                for link in serial_by_path.iterdir():
+                    try:
+                        if link.is_symlink():
+                            real_device = str(link.resolve())
+                            path_name = link.name
+                            usb_port = self._parse_usb_port(path_name)
+                            by_path_map[real_device] = {
+                                'path_name': path_name,
+                                'usb_port': usb_port
+                            }
+                    except Exception as e:
+                        self.app_logger.error(f"Error reading by-path symlink {link}: {e}")
+        except Exception as e:
+            self.app_logger.error(f"Error reading /dev/serial/by-path: {e}")
+        
+        # Now read by-id and combine with by-path info
         try:
             serial_by_id = Path('/dev/serial/by-id')
-            self.app_logger.info(f"Checking /dev/serial/by-id - exists: {serial_by_id.exists()}")
             if serial_by_id.exists() and serial_by_id.is_dir():
-                entries = list(serial_by_id.iterdir())
-                self.app_logger.info(f"Found {len(entries)} entries in /dev/serial/by-id")
-                for link in entries:
+                for link in serial_by_id.iterdir():
                     try:
-                        self.app_logger.info(f"Processing: {link.name}, is_symlink: {link.is_symlink()}")
                         if link.is_symlink():
                             real_device = str(link.resolve())
                             by_id_name = link.name
                             # Clean up name for display
                             display_name = by_id_name.replace('usb-', '').replace('-if00-port0', '').replace('_', ' ')
+                            
+                            # Get USB port info from by-path map
+                            path_info = by_path_map.get(real_device, {})
+                            
                             devices.append({
                                 'device': real_device,
                                 'by_id_name': by_id_name,
-                                'display_name': display_name
+                                'display_name': display_name,
+                                'usb_port': path_info.get('usb_port', 'Unknown'),
+                                'path_name': path_info.get('path_name', '')
                             })
-                            self.app_logger.info(f"Added device: {real_device} -> {display_name}")
                     except Exception as e:
                         self.app_logger.error(f"Error reading symlink {link}: {e}")
-            else:
-                self.app_logger.warning(f"/dev/serial/by-id does not exist or is not a directory")
         except Exception as e:
             self.app_logger.error(f"Error reading /dev/serial/by-id: {e}")
-        self.app_logger.info(f"Returning {len(devices)} devices")
+        
+        # Sort by device name for consistent ordering
+        devices.sort(key=lambda x: x['device'])
         return devices
+
+    def _parse_usb_port(self, path_name):
+        """
+        Parse the by-path name to determine physical USB port.
+        
+        Raspberry Pi 4/5 USB topology:
+        - usb-0:1.1.x = USB 2.0 ports (active hub)
+        - usb-0:1.2 = USB 3.0 bottom-left
+        - usb-0:1.3 = USB 3.0 bottom-right  
+        - usb-0:1.4 = USB 3.0 top-left (Pi 5)
+        
+        The pattern is: platform-...-usb-0:X.Y.Z:interface-port0
+        """
+        try:
+            # Extract the USB path portion (e.g., "0:1.3:1.0")
+            import re
+            match = re.search(r'usb-(\d+:\d+(?:\.\d+)*):(\d+\.\d+)', path_name)
+            if match:
+                bus_path = match.group(1)  # e.g., "0:1.3" or "0:1.1.4"
+                
+                # Determine port based on path
+                if ':1.1.' in bus_path or bus_path.endswith(':1.1'):
+                    # USB 2.0 hub ports
+                    return 'USB 2.0 Hub'
+                elif ':1.2' in bus_path:
+                    return 'USB 3.0 #1'
+                elif ':1.3' in bus_path:
+                    return 'USB 3.0 #2'
+                elif ':1.4' in bus_path:
+                    return 'USB 3.0 #3'
+                else:
+                    return f'USB ({bus_path})'
+            return 'Unknown'
+        except Exception as e:
+            self.app_logger.error(f"Error parsing USB port from {path_name}: {e}")
+            return 'Unknown'
 
     def _try_baud_rate(self, port, baud_rate, timeout=3):
         """

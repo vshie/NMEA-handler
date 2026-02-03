@@ -163,18 +163,29 @@
     .connection-status {
       margin: 10px 0;
     }
-    .device-id-table {
-      background: #f5f5f5;
+    .device-id-panel {
+      border: 1px solid #e0e0e0;
       border-radius: 4px;
     }
+    .device-id-panel .v-expansion-panel-header {
+      min-height: 36px;
+    }
+    .device-id-table {
+      background: #fafafa;
+    }
+    .device-id-table th {
+      font-size: 11px !important;
+      font-weight: 500;
+      color: #666;
+    }
     .device-id-table td {
-      border-bottom: none !important;
       font-size: 12px;
     }
     .device-id-table code {
-      background: #e0e0e0;
+      background: #e8e8e8;
       padding: 2px 6px;
       border-radius: 3px;
+      font-size: 11px;
     }
     .message-types {
       margin-top: 20px;
@@ -273,24 +284,46 @@
                 </v-col>
               </v-row>
               
-              <!-- Device ID Mapping -->
-              <div class="mb-3">
-                <div class="text-caption grey--text mb-1">
-                  Device Identification: 
-                  <span v-if="deviceIds.length === 0">(none found)</span>
-                  <span v-else>({{ deviceIds.length }} devices)</span>
-                </div>
-                <v-simple-table v-if="deviceIds.length > 0" dense class="device-id-table">
-                  <template v-slot:default>
-                    <tbody>
-                      <tr v-for="(item, index) in deviceIds" :key="index">
-                        <td class="py-1"><code>{{ item.device }}</code></td>
-                        <td class="py-1">{{ item.display_name }}</td>
-                      </tr>
-                    </tbody>
-                  </template>
-                </v-simple-table>
-              </div>
+              <!-- Device ID Mapping (Collapsible) -->
+              <v-expansion-panels flat class="mb-3 device-id-panel">
+                <v-expansion-panel>
+                  <v-expansion-panel-header class="py-1 px-3">
+                    <div class="text-caption">
+                      <v-icon small class="mr-1">mdi-usb</v-icon>
+                      Device Identification
+                      <span v-if="deviceIds.length === 0" class="grey--text">(none found)</span>
+                      <span v-else class="grey--text">({{ deviceIds.length }} devices)</span>
+                    </div>
+                  </v-expansion-panel-header>
+                  <v-expansion-panel-content>
+                    <v-simple-table v-if="deviceIds.length > 0" dense class="device-id-table">
+                      <template v-slot:default>
+                        <thead>
+                          <tr>
+                            <th class="text-left">Port</th>
+                            <th class="text-left">Device</th>
+                            <th class="text-left">USB Location</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="(item, index) in deviceIds" :key="index">
+                            <td class="py-1"><code>{{ item.device }}</code></td>
+                            <td class="py-1">{{ item.display_name }}</td>
+                            <td class="py-1">
+                              <v-chip x-small label :color="getUsbPortColor(item.usb_port)">
+                                {{ item.usb_port }}
+                              </v-chip>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </template>
+                    </v-simple-table>
+                    <div v-else class="text-caption grey--text pa-2">
+                      No serial devices detected in /dev/serial/by-id/
+                    </div>
+                  </v-expansion-panel-content>
+                </v-expansion-panel>
+              </v-expansion-panels>
               
               <!-- Connection Status -->
               <v-row>
@@ -1171,6 +1204,14 @@
           if (!timestamp) return '';
           const date = new Date(timestamp);
           return date.toLocaleTimeString();
+        },
+        getUsbPortColor(usbPort) {
+          if (!usbPort) return 'grey';
+          if (usbPort.includes('3.0 #1')) return 'blue';
+          if (usbPort.includes('3.0 #2')) return 'green';
+          if (usbPort.includes('3.0 #3')) return 'purple';
+          if (usbPort.includes('2.0')) return 'orange';
+          return 'grey';
         },
         // Unit conversion methods
         formatWindSpeed(kts) {
