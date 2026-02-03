@@ -281,12 +281,14 @@
                   <span v-else>({{ deviceIds.length }} devices)</span>
                 </div>
                 <v-simple-table v-if="deviceIds.length > 0" dense class="device-id-table">
-                  <tbody>
-                    <tr v-for="dev in deviceIds" :key="dev.device">
-                      <td class="py-1"><code>{{ dev.device }}</code></td>
-                      <td class="py-1">{{ dev.display_name }}</td>
-                    </tr>
-                  </tbody>
+                  <template v-slot:default>
+                    <tbody>
+                      <tr v-for="(item, index) in deviceIds" :key="index">
+                        <td class="py-1"><code>{{ item.device }}</code></td>
+                        <td class="py-1">{{ item.display_name }}</td>
+                      </tr>
+                    </tbody>
+                  </template>
                 </v-simple-table>
               </div>
               
