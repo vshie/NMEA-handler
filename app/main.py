@@ -778,6 +778,8 @@ class NMEAHandler:
                 data = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
                 if data.startswith('$'):
                     self.app_logger.info(f"Confirmed communication at 38400 baud")
+                    # Update state immediately so any save_state() (e.g. from API) persists 38400
+                    self.state['baud_rate'] = 38400
                     return True, "Switched to 38400 baud"
                 time.sleep(0.1)
             
@@ -998,7 +1000,8 @@ class NMEAHandler:
             
             self.detected_baud = None
             max_attempts = 6  # 3 attempts at each baud rate
-            baud_rates = [4800, 38400]
+            # If caller requests 38400 (e.g. saved state), try 38400 first
+            baud_rates = [38400, 4800] if baud_rate == 38400 else [4800, 38400]
             
             # Try to establish connection
             for attempt in range(max_attempts):
@@ -1025,9 +1028,12 @@ class NMEAHandler:
                         self.app_logger.info("Connected at 4800 baud, switching to 38400...")
                         success, msg = self._switch_to_38400(port)
                         if not success:
-                            self.connection_status = self.CONN_STATUS_FAILED
-                            self.connection_message = f"Failed to switch baud rate: {msg}"
-                            return False, self.connection_message
+                            # Device may have switched anyway; close and try 38400 next
+                            self.app_logger.warning(f"Switch to 38400 failed: {msg}; will try 38400 directly")
+                            if self.serial_connection and self.serial_connection.is_open:
+                                self.serial_connection.close()
+                            self.serial_connection = None
+                            continue
                     
                     # Now at 38400 baud - enable required sentences
                     success, msg = self.enable_required_sentences()
@@ -1257,7 +1263,11 @@ def select_port():
     if not data or 'port' not in data:
         return jsonify({"success": False, "message": "No port specified"})
     
-    baud_rate = data.get('baud_rate', 4800)  # Default to 4800 if not specified
+    # Prefer saved baud when reconnecting to same port (e.g. after disconnect)
+    if data['port'] == nmea_handler.state.get('port'):
+        baud_rate = data.get('baud_rate') or nmea_handler.state.get('baud_rate', 4800)
+    else:
+        baud_rate = data.get('baud_rate', 4800)
     success, message = nmea_handler.connect_serial(data['port'], baud_rate)
     return jsonify({"success": success, "message": message})
 
