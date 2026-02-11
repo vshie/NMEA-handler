@@ -6,12 +6,13 @@ import logging
 import json
 import socket
 from pathlib import Path
-from flask import Flask, jsonify, request, send_file, send_from_directory
+from flask import Flask, jsonify, request, send_file, send_from_directory, Response
 from flask_cors import CORS
 import datetime
 import re
 import threading
 import time
+import queue
 
 app = Flask(__name__, static_folder='static')
 CORS(app)
@@ -98,6 +99,12 @@ class NMEAHandler:
             'unmapped_messages': 0,
             'last_unmapped_type': None,
         }
+
+        # SSE (Server-Sent Events) clients for near real-time UI updates
+        self._sse_clients_lock = threading.Lock()
+        self._sse_clients = set()  # set[queue.Queue]
+        self._last_sensor_emit_ts = 0.0
+        self._last_status_emit_ts = 0.0
         
         # Connection status tracking
         self.connection_status = self.CONN_STATUS_DISCONNECTED
@@ -357,6 +364,64 @@ class NMEAHandler:
         h['baud_rate'] = self.state.get('baud_rate')
         return h
 
+    def _sse_broadcast(self, event_name, payload):
+        """Send an event to all connected SSE clients."""
+        if not event_name:
+            return
+        msg = {'event': event_name, 'data': payload}
+        with self._sse_clients_lock:
+            clients = list(self._sse_clients)
+        for q in clients:
+            try:
+                q.put_nowait(msg)
+            except queue.Full:
+                # Drop oldest and try again
+                try:
+                    q.get_nowait()
+                except Exception:
+                    pass
+                try:
+                    q.put_nowait(msg)
+                except Exception:
+                    pass
+
+    def sse_add_client(self, max_queue=500):
+        q = queue.Queue(maxsize=max_queue)
+        with self._sse_clients_lock:
+            self._sse_clients.add(q)
+        return q
+
+    def sse_remove_client(self, q):
+        with self._sse_clients_lock:
+            try:
+                self._sse_clients.discard(q)
+            except Exception:
+                pass
+
+    def _emit_sensor_if_due(self):
+        now = time.time()
+        # At most 5 Hz to avoid UI thrash
+        if now - self._last_sensor_emit_ts >= 0.2:
+            self._last_sensor_emit_ts = now
+            self._sse_broadcast('sensor_data', self.sensor_data)
+
+    def _emit_status_if_due(self):
+        now = time.time()
+        # At most 1 Hz for status (counts/health)
+        if now - self._last_status_emit_ts >= 1.0:
+            self._last_status_emit_ts = now
+            self._sse_broadcast('stream_status', {
+                'is_streaming': self.is_streaming,
+                'streaming_to': "host.docker.internal:27000" if self.is_streaming else None,
+                'selected_message_types': list(self.selected_message_types),
+                'streamed_messages': self.streamed_messages,
+                'messages_received': self.messages_received,
+                'serial_health': self.get_serial_health(),
+                'observed_sentence_last_seen': self.sentence_last_seen,
+                'now': now,
+                'connected_since': self.connected_since,
+            })
+
     def _read_serial_loop(self):
         """Background thread function for reading serial data. Processes messages as fast as
         they arrive; only sleeps when read returns no data to avoid busy-loop on USB quirks."""
@@ -410,6 +475,8 @@ class NMEAHandler:
                             self.selected_message_types.add(msg_type)
                             self.state['selected_message_types'] = list(self.selected_message_types)
                             self.save_state()
+                            # Let UI know selection changed
+                            self._sse_broadcast('selected_message_types', list(self.selected_message_types))
                         
                         # Update aggregated sensor data
                         self._parse_nmea_for_dashboard(data, msg_type)
@@ -426,6 +493,11 @@ class NMEAHandler:
                         
                         # Log the message
                         self.log_message(data)
+                        # Push to UI (near real-time)
+                        self._sse_broadcast('nmea_message', message)
+                        # Push derived aggregates/status (throttled)
+                        self._emit_sensor_if_due()
+                        self._emit_status_if_due()
                         # Stream the message if streaming is active and type is selected
                         if self.is_streaming and msg_type in self.selected_message_types:
                             self.stream_message(data, msg_type)
@@ -1368,6 +1440,7 @@ class NMEAHandler:
                     detected_msg = f" (detected at {self.detected_baud})" if self.detected_baud == 38400 else " (switched from 4800)"
                     self.connection_message = f"Connected to {port} at 38400 baud{detected_msg}"
                     self.app_logger.info(self.connection_message)
+                    self._sse_broadcast('connection', self.get_connection_info())
                     
                     # Always start streaming on successful connection so the extension can work without opening the UI
                     if not self.selected_message_types:
@@ -1417,6 +1490,7 @@ class NMEAHandler:
             self.connection_status = self.CONN_STATUS_DISCONNECTED
             self.connection_message = ''
             self.save_state()
+            self._sse_broadcast('connection', self.get_connection_info())
             
             return True, "Disconnected from serial port"
         except Exception as e:
@@ -1528,6 +1602,56 @@ class NMEAHandler:
 
 # Create NMEA handler instance
 nmea_handler = NMEAHandler()
+
+def _sse_encode(event_name, data_obj):
+    payload = json.dumps(data_obj, separators=(',', ':'))
+    return f"event: {event_name}\ndata: {payload}\n\n"
+
+@app.route('/api/events', methods=['GET'])
+def sse_events():
+    """Server-Sent Events stream for near real-time UI updates."""
+    q = nmea_handler.sse_add_client()
+
+    def gen():
+        try:
+            # Initial snapshot
+            init = {
+                'connection': nmea_handler.get_connection_info(),
+                'stream_status': {
+                    'is_streaming': nmea_handler.is_streaming,
+                    'streaming_to': "host.docker.internal:27000" if nmea_handler.is_streaming else None,
+                    'selected_message_types': list(nmea_handler.selected_message_types),
+                    'streamed_messages': nmea_handler.streamed_messages,
+                    'messages_received': nmea_handler.messages_received,
+                    'serial_health': nmea_handler.get_serial_health(),
+                    'observed_sentence_last_seen': nmea_handler.sentence_last_seen,
+                    'now': time.time(),
+                    'connected_since': nmea_handler.connected_since,
+                },
+                'sensor_data': nmea_handler.sensor_data,
+                'available_types': list(nmea_handler.nmea_messages),
+                'messages': nmea_handler.message_history[:50],
+            }
+            yield _sse_encode('init', init)
+
+            while True:
+                try:
+                    msg = q.get(timeout=15)
+                    yield _sse_encode(msg['event'], msg['data'])
+                except queue.Empty:
+                    # Keepalive comment
+                    yield ": keepalive\n\n"
+        except GeneratorExit:
+            pass
+        finally:
+            nmea_handler.sse_remove_client(q)
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return Response(gen(), mimetype='text/event-stream', headers=headers)
 
 @app.route('/')
 def index():

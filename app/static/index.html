@@ -1261,6 +1261,11 @@
           serial_health: null,
           messages_per_second: null
         },
+        sse: {
+          connected: false,
+          last_error: null
+        },
+        _eventSource: null,
         dialog: false,
         // Connection status
         isConnecting: false,
@@ -1418,6 +1423,88 @@
         }
       },
       methods: {
+        startSse() {
+          if (this._eventSource) return;
+          const es = new EventSource('/api/events');
+          this._eventSource = es;
+          es.addEventListener('open', () => {
+            this.sse.connected = true;
+            this.sse.last_error = null;
+          });
+          es.addEventListener('error', () => {
+            this.sse.connected = false;
+            this.sse.last_error = 'SSE disconnected';
+          });
+          es.addEventListener('init', (ev) => {
+            try {
+              const data = JSON.parse(ev.data);
+              if (data.connection) this.connectionInfo = data.connection;
+              if (data.stream_status) this.applyStreamStatus(data.stream_status);
+              if (data.sensor_data) this.sensorData = data.sensor_data;
+              if (data.available_types) this.availableMessageTypes = data.available_types;
+              if (data.messages) this.messages = data.messages;
+            } catch (e) {
+              console.error('Error parsing init SSE:', e);
+            }
+          });
+          es.addEventListener('nmea_message', (ev) => {
+            try {
+              const msg = JSON.parse(ev.data);
+              this.messages.unshift(msg);
+              if (this.messages.length > 200) this.messages.pop();
+            } catch (e) {}
+          });
+          es.addEventListener('sensor_data', (ev) => {
+            try { this.sensorData = JSON.parse(ev.data); } catch (e) {}
+          });
+          es.addEventListener('stream_status', (ev) => {
+            try { this.applyStreamStatus(JSON.parse(ev.data)); } catch (e) {}
+          });
+          es.addEventListener('selected_message_types', (ev) => {
+            try { this.selectedMessageTypes = JSON.parse(ev.data); } catch (e) {}
+          });
+          es.addEventListener('connection', (ev) => {
+            try {
+              this.connectionInfo = JSON.parse(ev.data);
+              if (!this.connectionInfo.connected) this.stopSse();
+            } catch (e) {}
+          });
+        },
+        stopSse() {
+          if (this._eventSource) {
+            try { this._eventSource.close(); } catch (e) {}
+            this._eventSource = null;
+          }
+          this.sse.connected = false;
+        },
+        applyStreamStatus(ss) {
+          // Compute message receive rate (msgs/s) from deltas
+          const now = Date.now();
+          const prevCount = this.streamingStatus.messages_received ?? 0;
+          const prevAt = this.streamingStatus._last_count_at ?? null;
+          const nextCount = ss.messages_received ?? 0;
+          let mps = null;
+          if (prevAt !== null && typeof prevCount === 'number') {
+            const dt = (now - prevAt) / 1000;
+            if (dt > 0.2) mps = (nextCount - prevCount) / dt;
+          }
+          this.streamingStatus = {
+            streaming_to: ss.streaming_to,
+            selected_message_types: ss.selected_message_types || [],
+            streamed_messages: ss.streamed_messages || 0,
+            messages_received: nextCount,
+            serial_health: ss.serial_health || null,
+            messages_per_second: (mps !== null && isFinite(mps)) ? Math.max(0, mps) : null,
+            _last_count_at: now
+          };
+          if (ss.selected_message_types && ss.selected_message_types.length > 0) {
+            this.selectedMessageTypes = ss.selected_message_types;
+          }
+          // Keep sentence switches in sync using last-seen
+          if (this.connectionInfo.connected && ss.observed_sentence_last_seen && this.sentences.length > 0) {
+            this.reconcileSentenceSwitches(ss.observed_sentence_last_seen, ss.now, ss.connected_since);
+          }
+        },
         formatTime(timestamp) {
           if (!timestamp) return '';
           const date = new Date(timestamp);
@@ -2007,27 +2094,13 @@
           try {
             const response = await axios.get('/api/stream/status');
             this.isStreaming = response.data.is_streaming;
-            // Compute message receive rate (msgs/s) from deltas
-            const now = Date.now();
-            const prevCount = this.streamingStatus.messages_received ?? 0;
-            const prevAt = this.streamingStatus._last_count_at ?? null;
-            const nextCount = response.data.messages_received ?? 0;
-            let mps = null;
-            if (prevAt !== null && typeof prevCount === 'number') {
-              const dt = (now - prevAt) / 1000;
-              if (dt > 0.2) {
-                mps = (nextCount - prevCount) / dt;
-              }
-            }
-            this.streamingStatus = {
+            this.applyStreamStatus({
               streaming_to: response.data.streaming_to,
               selected_message_types: response.data.selected_message_types || [],
               streamed_messages: response.data.streamed_messages || 0,
-              messages_received: nextCount,
-              serial_health: response.data.serial_health || null,
-              messages_per_second: (mps !== null && isFinite(mps)) ? Math.max(0, mps) : null,
-              _last_count_at: now
-            };
+              messages_received: response.data.messages_received ?? 0,
+              serial_health: response.data.serial_health || null
+            });
             // Only restore streaming if it was active
             if (response.data.is_streaming && !this.isStreaming) {
               await this.toggleStreaming();
@@ -2165,10 +2238,13 @@
         },
         startPolling() {
           this.pollingInterval = setInterval(() => {
-            this.readSerial();
             this.fetchConnectionStatus();
-            this.checkStreamingStatus();
-            this.fetchSensorData();
+            // If SSE is down, fall back to polling
+            if (!this.sse.connected) {
+              this.readSerial();
+              this.checkStreamingStatus();
+              this.fetchSensorData();
+            }
             this.fetchSensorHistory();
           }, 1000);
         },
@@ -2374,12 +2450,14 @@
         this.fetchSensorData();
         this.fetchSensorHistory();
         this.fetchLogsInfo();
+        this.startSse();
         this.freshnessTick = Date.now();
         this.freshnessInterval = setInterval(() => {
           this.freshnessTick = Date.now();
         }, 1000);
       },
       beforeDestroy() {
+        this.stopSse();
         if (this.sentenceFlushTimer) {
           clearTimeout(this.sentenceFlushTimer);
           this.sentenceFlushTimer = null;
