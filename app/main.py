@@ -88,6 +88,8 @@ class NMEAHandler:
             'is_streaming': False,
             'selected_message_types': []
         }
+        # Lock so only one consumer reads from serial (reader thread vs sentence query)
+        self._serial_lock = threading.Lock()
         
         # Aggregated sensor data for dashboard display
         self.sensor_data = {
@@ -249,7 +251,8 @@ class NMEAHandler:
         while not self.should_stop:
             if self.serial_connection and self.serial_connection.is_open:
                 try:
-                    data = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
+                    with self._serial_lock:
+                        data = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
                     if data.startswith('$'):
                         # Parse NMEA message
                         msg_type = data.split(',')[0][1:]  # Remove $ and get message type
@@ -355,14 +358,14 @@ class NMEAHandler:
                     self.sensor_data['attitude']['timestamp'] = timestamp
                     self._record_history('heading', heading)
             
-            # HCHDG - Heading Magnetic
-            elif msg_type == 'HCHDG':
+            # HCHDG / CHDG - Heading Magnetic
+            elif msg_type in ('HCHDG', 'CHDG'):
                 # $HCHDG,heading,dev,E/W,var,E/W*CC
                 if len(fields) >= 2 and fields[1]:
                     heading = float(fields[1])
                     self.sensor_data['attitude']['heading_magnetic'] = heading
                     if self.sensor_data['attitude']['source'] != 'HCHDT':
-                        self.sensor_data['attitude']['source'] = 'HCHDG'
+                        self.sensor_data['attitude']['source'] = msg_type
                         self.sensor_data['attitude']['timestamp'] = timestamp
             
             # YXXDR - Transducer Measurements (Pitch/Roll from type B)
@@ -888,6 +891,7 @@ class NMEAHandler:
         """
         Query the device for current sentence configuration.
         Sends $PAMTC,EN,Q and parses the response.
+        Holds the serial read lock so the reader thread does not consume response lines.
         
         Returns (success, config_dict or error_message)
         """
@@ -895,40 +899,40 @@ class NMEAHandler:
             if not self.serial_connection or not self.serial_connection.is_open:
                 return False, "Not connected"
             
-            # Clear any pending data
-            self.serial_connection.reset_input_buffer()
-            
-            # Send query command
-            self.app_logger.info("Querying device sentence configuration")
-            self.serial_connection.write(b'$PAMTC,EN,Q\r\n')
-            
-            # Collect responses (device sends multiple $PAMTR,EN lines)
-            config = {}
-            start_time = time.time()
-            timeout = 5  # 5 second timeout
-            
-            while time.time() - start_time < timeout:
-                line = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
+            with self._serial_lock:
+                # Clear any pending data
+                self.serial_connection.reset_input_buffer()
                 
-                if line.startswith('$PAMTR,EN,'):
-                    # Parse: $PAMTR,EN,<total>,<num>,<id>,<enabled>,<interval>
-                    parts = line.split(',')
-                    if len(parts) >= 6:
-                        sentence_id = parts[3]
-                        enabled = parts[4] == '1'
-                        interval = int(parts[5]) if parts[5].isdigit() else 10
-                        
-                        config[sentence_id] = {
-                            'enabled': enabled,
-                            'interval': interval
-                        }
-                        self.app_logger.info(f"  {sentence_id}: enabled={enabled}, interval={interval/10}s")
+                # Send query command
+                self.app_logger.info("Querying device sentence configuration")
+                self.serial_connection.write(b'$PAMTC,EN,Q\r\n')
                 
-                # Check if we've received all responses
-                if len(config) >= len(self.SUPPORTED_SENTENCES):
-                    break
+                # Collect responses (device sends multiple $PAMTR,EN lines)
+                config = {}
+                start_time = time.time()
+                timeout = 5  # 5 second timeout
+                
+                while time.time() - start_time < timeout:
+                    line = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
                     
-                time.sleep(0.05)
+                    if line.startswith('$PAMTR,EN,'):
+                        # Parse: $PAMTR,EN,<total>,<num>,<id>,<enabled>,<interval> or $PAMTR,EN,<id>,<enabled>,<interval>
+                        parts = line.split(',')
+                        if len(parts) >= 6:
+                            # If 7+ parts: total,num,id,enabled,interval at 2,3,4,5,6
+                            if len(parts) >= 7 and parts[4] in self.SUPPORTED_SENTENCES:
+                                sentence_id, enabled_str, interval_str = parts[4], parts[5], parts[6]
+                            else:
+                                sentence_id, enabled_str, interval_str = parts[3], parts[4], parts[5]
+                            enabled = enabled_str == '1'
+                            interval = int(interval_str) if interval_str.isdigit() else 10
+                            if sentence_id in self.SUPPORTED_SENTENCES:
+                                config[sentence_id] = {'enabled': enabled, 'interval': interval}
+                                self.app_logger.info(f"  {sentence_id}: enabled={enabled}, interval={interval/10}s")
+                    
+                    if len(config) >= len(self.SUPPORTED_SENTENCES):
+                        break
+                    time.sleep(0.05)
             
             if config:
                 return True, config

@@ -1211,6 +1211,7 @@
           'WIMWV': 'Wind Speed & Angle (Relative)',
           'WIMWD': 'Wind Direction & Speed (True)',
           'GPGGA': 'GPS Position Fix',
+          'GPGA': 'GPS Position Fix',
           'YXXDR': 'Transducer Measurements',
           'GPRMC': 'Recommended Minimum Navigation',
           'GPVTG': 'Track Made Good & Ground Speed',
@@ -1219,6 +1220,7 @@
           'GPGSV': 'Satellites in View',
           'HCHDT': 'Heading True',
           'HCHDG': 'Heading Magnetic',
+          'CHDG': 'Heading Magnetic (Compact)',
           'TIROT': 'Rate of Turn',
           'WIMDA': 'Meteorological Composite',
           'WIVWR': 'Relative Wind (Alt)',
@@ -1441,11 +1443,14 @@
               case 'WIMWV': return this.parseWIMWV(fields);
               case 'WIMWD': return this.parseWIMWD(fields);
               case 'GPGGA': return this.parseGPGGA(fields);
+              case 'GPGA': return this.parseGPGGA(fields);
               case 'YXXDR': return this.parseYXXDR(fields);
               case 'GPRMC': return this.parseGPRMC(fields);
               case 'GPVTG': return this.parseGPVTG(fields);
               case 'GPGLL': return this.parseGPGLL(fields);
               case 'HCHDT': return this.parseHCHDT(fields);
+              case 'HCHDG': return this.parseHCHDG(fields);
+              case 'CHDG': return this.parseHCHDG(fields);
               case 'WIMDA': return this.parseWIMDA(fields);
               default: return this.parseGeneric(fields);
             }
@@ -1655,6 +1660,26 @@
           const values = [];
           if (fields[1]) {
             values.push({ label: 'True Heading', value: parseFloat(fields[1]).toFixed(1), unit: '°' });
+          }
+          return values;
+        },
+        parseHCHDG(fields) {
+          // $HCHDG,heading,dev,E/W,var,E/W*CC or $CHDG,heading,dev,E/W,var,E/W*CC
+          const values = [];
+          if (fields[1]) {
+            values.push({ label: 'Magnetic Heading', value: parseFloat(fields[1]).toFixed(1), unit: '°' });
+          }
+          if (fields[2]) {
+            values.push({ label: 'Deviation', value: parseFloat(fields[2]).toFixed(1), unit: '°' });
+          }
+          if (fields[3]) {
+            values.push({ label: 'Deviation Dir', value: fields[3], unit: '' });
+          }
+          if (fields[4]) {
+            values.push({ label: 'Variation', value: parseFloat(fields[4]).toFixed(1), unit: '°' });
+          }
+          if (fields[5]) {
+            values.push({ label: 'Variation Dir', value: fields[5], unit: '' });
           }
           return values;
         },
