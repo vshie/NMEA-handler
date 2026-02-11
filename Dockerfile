@@ -55,14 +55,7 @@ LABEL permissions='\
     "CpuQuota": 100000,\
     "Binds": [\
       "/usr/blueos/extensions/nmea-handler:/app/logs",\
-      "/dev/serial:/dev/serial",\
-      "/dev/ttyUSB0:/dev/ttyUSB0",\
-      "/dev/ttyUSB1:/dev/ttyUSB1",\
-      "/dev/ttyUSB2:/dev/ttyUSB2",\
-      "/dev/ttyUSB3:/dev/ttyUSB3",\
-      "/dev/ttyACM0:/dev/ttyAMA1",\
-      "/dev/ttyACM0:/dev/ttyAMA2",\
-      "/dev/ttyACM1:/dev/ttyAMA3"\
+      "/dev:/dev"\
     ],\
     "ExtraHosts": ["host.docker.internal:host-gateway"],\
     "PortBindings": {\
