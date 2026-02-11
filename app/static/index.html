@@ -589,6 +589,64 @@
                   <div v-else-if="connectionInfo.connected" class="text-caption mb-3 grey--text">
                     Waiting for sensor data...
                   </div>
+
+                  <!-- Serial health / link quality -->
+                  <div v-if="connectionInfo.connected && streamingStatus.serial_health" class="mb-4">
+                    <div class="text-overline mb-2">Serial health</div>
+                    <v-row>
+                      <v-col cols="6" md="3">
+                        <div class="sensor-tile">
+                          <div class="sensor-tile-header">
+                            <span class="sensor-tile-title">Rx rate</span>
+                          </div>
+                          <span class="sensor-tile-value">
+                            {{ streamingStatus.messages_per_second !== null ? streamingStatus.messages_per_second.toFixed(1) : '--' }}
+                          </span>
+                          <span class="sensor-tile-unit">msg/s</span>
+                        </div>
+                      </v-col>
+                      <v-col cols="6" md="3">
+                        <div class="sensor-tile">
+                          <div class="sensor-tile-header">
+                            <span class="sensor-tile-title">Last NMEA</span>
+                          </div>
+                          <span class="sensor-tile-value">
+                            {{ streamingStatus.serial_health.seconds_since_last_good_nmea !== null ? streamingStatus.serial_health.seconds_since_last_good_nmea.toFixed(1) : '--' }}
+                          </span>
+                          <span class="sensor-tile-unit">s ago</span>
+                        </div>
+                      </v-col>
+                      <v-col cols="6" md="3">
+                        <div class="sensor-tile">
+                          <div class="sensor-tile-header">
+                            <span class="sensor-tile-title">No-data reads</span>
+                          </div>
+                          <span class="sensor-tile-value">
+                            {{ streamingStatus.serial_health.nodata_exceptions ?? 0 }}
+                          </span>
+                          <span class="sensor-tile-unit">events</span>
+                        </div>
+                      </v-col>
+                      <v-col cols="6" md="3">
+                        <div class="sensor-tile">
+                          <div class="sensor-tile-header">
+                            <span class="sensor-tile-title">Checksum errors</span>
+                          </div>
+                          <span class="sensor-tile-value">
+                            {{ streamingStatus.serial_health.checksum_mismatch ?? 0 }}
+                          </span>
+                          <span class="sensor-tile-unit">bad</span>
+                        </div>
+                      </v-col>
+                    </v-row>
+                    <div class="text-caption grey--text mt-1">
+                      Port: <code>{{ streamingStatus.serial_health.port }}</code>,
+                      Baud: <code>{{ streamingStatus.serial_health.baud_rate }}</code>,
+                      in_waiting: <code>{{ streamingStatus.serial_health.last_in_waiting }}</code>,
+                      unmapped: <code>{{ streamingStatus.serial_health.unmapped_messages ?? 0 }}</code>
+                      <span v-if="streamingStatus.serial_health.last_unmapped_type"> (last: <code>{{ streamingStatus.serial_health.last_unmapped_type }}</code>)</span>
+                    </div>
+                  </div>
                   
                   <!-- Wind Section -->
                   <div
@@ -1199,7 +1257,9 @@
           streaming_to: null,
           selected_message_types: [],
           streamed_messages: 0,
-          messages_received: 0
+          messages_received: 0,
+          serial_health: null,
+          messages_per_second: null
         },
         dialog: false,
         // Connection status
@@ -1947,11 +2007,26 @@
           try {
             const response = await axios.get('/api/stream/status');
             this.isStreaming = response.data.is_streaming;
+            // Compute message receive rate (msgs/s) from deltas
+            const now = Date.now();
+            const prevCount = this.streamingStatus.messages_received ?? 0;
+            const prevAt = this.streamingStatus._last_count_at ?? null;
+            const nextCount = response.data.messages_received ?? 0;
+            let mps = null;
+            if (prevAt !== null && typeof prevCount === 'number') {
+              const dt = (now - prevAt) / 1000;
+              if (dt > 0.2) {
+                mps = (nextCount - prevCount) / dt;
+              }
+            }
             this.streamingStatus = {
               streaming_to: response.data.streaming_to,
               selected_message_types: response.data.selected_message_types || [],
               streamed_messages: response.data.streamed_messages || 0,
-              messages_received: response.data.messages_received ?? 0
+              messages_received: nextCount,
+              serial_health: response.data.serial_health || null,
+              messages_per_second: (mps !== null && isFinite(mps)) ? Math.max(0, mps) : null,
+              _last_count_at: now
             };
             // Only restore streaming if it was active
             if (response.data.is_streaming && !this.isStreaming) {
@@ -2184,7 +2259,8 @@
           this.sentences.forEach(sentence => {
             const id = sentence.id;
             const interval = this.getSentenceInterval(sentence); // seconds
-            const threshold = 3 * interval;
+            // Use a minimum threshold since this UI only reconciles once per second.
+            const threshold = Math.max(3 * interval, 3);
             const lastSeen = lastSeenMap[id];
             const receiving = (typeof lastSeen === 'number') && ((now - lastSeen) <= threshold);
             const pastGrace = connectedSince !== null && ((now - connectedSince) > threshold);

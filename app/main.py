@@ -82,6 +82,22 @@ class NMEAHandler:
         # Last-seen timestamps for configured sentence IDs (used for UI sync)
         # { sentence_id: epoch_seconds_last_seen }
         self.sentence_last_seen = {}
+        # Serial health/debug stats (helps diagnose "returned no data" bursts)
+        self._serial_health_lock = threading.Lock()
+        self.serial_health = {
+            'last_good_nmea_ts': None,
+            'last_read_attempt_ts': None,
+            'last_raw_len': 0,
+            'last_in_waiting': None,
+            'read_timeouts': 0,
+            'empty_reads': 0,
+            'nodata_exceptions': 0,
+            'other_read_exceptions': 0,
+            'checksum_mismatch': 0,
+            'checksum_missing': 0,
+            'unmapped_messages': 0,
+            'last_unmapped_type': None,
+        }
         
         # Connection status tracking
         self.connection_status = self.CONN_STATUS_DISCONNECTED
@@ -313,6 +329,34 @@ class NMEAHandler:
         except Exception:
             return None
 
+    def _nmea_checksum_ok(self, raw_line):
+        """Return True if checksum matches, False if mismatch, None if no checksum present."""
+        try:
+            if not raw_line or '*' not in raw_line or not raw_line.startswith('$'):
+                return None
+            body, chk = raw_line[1:].split('*', 1)
+            chk = chk.strip()
+            if len(chk) < 2:
+                return None
+            expected = int(chk[:2], 16)
+            calc = 0
+            for b in body.encode('ascii', errors='ignore'):
+                calc ^= b
+            return calc == expected
+        except Exception:
+            return None
+
+    def get_serial_health(self):
+        """Return current serial health/debug stats."""
+        with self._serial_health_lock:
+            h = dict(self.serial_health)
+        now = time.time()
+        h['seconds_since_last_good_nmea'] = (now - h['last_good_nmea_ts']) if h.get('last_good_nmea_ts') else None
+        h['connected_since'] = self.connected_since
+        h['port'] = self.state.get('port')
+        h['baud_rate'] = self.state.get('baud_rate')
+        return h
+
     def _read_serial_loop(self):
         """Background thread function for reading serial data. Processes messages as fast as
         they arrive; only sleeps when read returns no data to avoid busy-loop on USB quirks."""
@@ -320,8 +364,19 @@ class NMEAHandler:
             if self.serial_connection and self.serial_connection.is_open:
                 got_data = False
                 try:
+                    with self._serial_health_lock:
+                        self.serial_health['last_read_attempt_ts'] = time.time()
                     with self._serial_lock:
                         raw = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
+                        try:
+                            with self._serial_health_lock:
+                                self.serial_health['last_in_waiting'] = getattr(self.serial_connection, 'in_waiting', None)
+                        except Exception:
+                            pass
+                    with self._serial_health_lock:
+                        self.serial_health['last_raw_len'] = len(raw) if raw else 0
+                        if not raw:
+                            self.serial_health['read_timeouts'] += 1
                     for data in self._split_nmea_sentences(raw):
                         got_data = True
                         self.messages_received += 1
@@ -330,10 +385,26 @@ class NMEAHandler:
                         m = re.match(r'^[A-Z]+', raw_type) if raw_type else None
                         msg_type = m.group(0) if m else (raw_type or '')
                         self.nmea_messages.add(msg_type)
+                        # Checksum quality metrics (helps spot flaky links)
+                        chk_ok = self._nmea_checksum_ok(data)
+                        with self._serial_health_lock:
+                            if chk_ok is True:
+                                self.serial_health['last_good_nmea_ts'] = time.time()
+                            elif chk_ok is False:
+                                self.serial_health['checksum_mismatch'] += 1
+                                # still treat as received; it's useful for diagnosis
+                                self.serial_health['last_good_nmea_ts'] = time.time()
+                            else:
+                                self.serial_health['checksum_missing'] += 1
+                                self.serial_health['last_good_nmea_ts'] = time.time()
                         # Track sentence last-seen for UI auto-sync
                         sentence_id = self._map_msg_to_sentence_id(data, msg_type)
                         if sentence_id:
                             self.sentence_last_seen[sentence_id] = time.time()
+                        else:
+                            with self._serial_health_lock:
+                                self.serial_health['unmapped_messages'] += 1
+                                self.serial_health['last_unmapped_type'] = msg_type
                         # New message types are selected for streaming by default
                         if msg_type not in self.selected_message_types:
                             self.selected_message_types.add(msg_type)
@@ -362,15 +433,34 @@ class NMEAHandler:
                     err_str = str(e)
                     # Throttle "read but no data" to avoid log flood and possible I/O contention
                     if "returned no data" in err_str or "multiple access" in err_str:
+                        with self._serial_health_lock:
+                            self.serial_health['nodata_exceptions'] += 1
                         now = time.time()
                         if now - self._last_serial_read_error_log >= 30:
                             self._last_serial_read_error_log = now
-                            self.app_logger.warning(f"Serial read: {err_str} (further occurrences throttled)")
+                            health = self.get_serial_health()
+                            self.app_logger.warning(
+                                "Serial read: %s (throttled). port=%s baud=%s in_waiting=%s "
+                                "since_last_good_nmea=%s timeouts=%s empty=%s nodata_ex=%s cksum_mismatch=%s",
+                                err_str,
+                                health.get('port'),
+                                health.get('baud_rate'),
+                                health.get('last_in_waiting'),
+                                health.get('seconds_since_last_good_nmea'),
+                                health.get('read_timeouts'),
+                                health.get('empty_reads'),
+                                health.get('nodata_exceptions'),
+                                health.get('checksum_mismatch'),
+                            )
                         time.sleep(0.02)  # Brief sleep only on spurious read so we don't tight-loop
                     else:
+                        with self._serial_health_lock:
+                            self.serial_health['other_read_exceptions'] += 1
                         self.app_logger.error(f"Error in serial reader thread: {e}")
                 if not got_data and not self.should_stop:
                     # No message this iteration (timeout or empty line); short sleep to avoid busy-wait
+                    with self._serial_health_lock:
+                        self.serial_health['empty_reads'] += 1
                     time.sleep(0.01)
             else:
                 time.sleep(0.2)  # Not connected; sleep before rechecking
@@ -1779,7 +1869,8 @@ def get_streaming_status():
         "selected_message_types": list(nmea_handler.selected_message_types),
         "streaming_to": "host.docker.internal:27000" if nmea_handler.is_streaming else None,
         "streamed_messages": nmea_handler.streamed_messages,
-        "messages_received": nmea_handler.messages_received
+        "messages_received": nmea_handler.messages_received,
+        "serial_health": nmea_handler.get_serial_health(),
     })
 
 @app.route('/api/message_types/update', methods=['POST'])
