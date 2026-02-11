@@ -665,11 +665,11 @@ class NMEAHandler:
         
         Raspberry Pi 4 USB layout (viewing ports head-on, ethernet on left):
         +-------------+-------------+
-        |  USB 2.0    |  USB 3.0    |   <- top row
-        |  (1.1.2)    |   (1.2)     |
-        +-------------+-------------+
-        |  USB 2.0    |  USB 3.0    |   <- bottom row
+        |  USB 2.0    |  USB 3.0    |   <- top row  (1.1.3, 1.3)
         |  (1.1.3)    |   (1.3)     |
+        +-------------+-------------+
+        |  USB 2.0    |  USB 3.0    |   <- bottom row (1.1.2, 1.2)
+        |  (1.1.2)    |   (1.2)     |
         +-------------+-------------+
            LEFT COL     RIGHT COL
         """
@@ -681,14 +681,15 @@ class NMEAHandler:
                 self.app_logger.info(f"Parsing USB path: {path_name} -> bus_path: {bus_path}")
                 
                 # Raspberry Pi 4 mapping - LEFT column is USB 2.0, RIGHT column is USB 3.0
+                # Top row = 1.1.3 (USB2), 1.3 (USB3); bottom row = 1.1.2 (USB2), 1.2 (USB3)
                 if ':1.1.2' in bus_path:
-                    return {'position': 'top-left', 'label': 'USB 2.0 Top', 'type': 'usb2', 'bus': bus_path}
-                elif ':1.1.3' in bus_path:
                     return {'position': 'bottom-left', 'label': 'USB 2.0 Bottom', 'type': 'usb2', 'bus': bus_path}
+                elif ':1.1.3' in bus_path:
+                    return {'position': 'top-left', 'label': 'USB 2.0 Top', 'type': 'usb2', 'bus': bus_path}
                 elif bus_path.endswith(':1.2') or ':1.2:' in bus_path:
-                    return {'position': 'top-right', 'label': 'USB 3.0 Top', 'type': 'usb3', 'bus': bus_path}
-                elif bus_path.endswith(':1.3') or ':1.3:' in bus_path:
                     return {'position': 'bottom-right', 'label': 'USB 3.0 Bottom', 'type': 'usb3', 'bus': bus_path}
+                elif bus_path.endswith(':1.3') or ':1.3:' in bus_path:
+                    return {'position': 'top-right', 'label': 'USB 3.0 Top', 'type': 'usb3', 'bus': bus_path}
                 elif ':1.1.' in bus_path:
                     # Generic USB 2.0 hub - log for debugging
                     self.app_logger.info(f"Generic USB 2.0 hub path: {bus_path}")
