@@ -154,12 +154,6 @@
       border-radius: 4px;
       word-break: break-all;
     }
-    .raw-toggle {
-      font-size: 11px;
-      color: #1976d2;
-      cursor: pointer;
-      margin-top: 4px;
-    }
     .connection-status {
       margin: 10px 0;
     }
@@ -186,6 +180,11 @@
       padding: 2px 6px;
       border-radius: 3px;
       font-size: 11px;
+    }
+    .device-id-table .hub-info {
+      display: block;
+      font-size: 10px;
+      color: #888;
     }
     .device-row {
       cursor: pointer;
@@ -391,7 +390,10 @@
                                 class="device-row">
                               <td class="py-1"><code>{{ item.device }}</code></td>
                               <td class="py-1">{{ item.display_name }}</td>
-                              <td class="py-1 text-caption grey--text">{{ item.usb_port ? item.usb_port.bus : '' }}</td>
+                              <td class="py-1 text-caption grey--text">
+                                {{ item.usb_port ? item.usb_port.bus : '' }}
+                                <span v-if="item.usb_port && item.usb_port.hub_info" class="hub-info">({{ item.usb_port.hub_info }})</span>
+                              </td>
                             </tr>
                           </tbody>
                         </template>
@@ -479,6 +481,7 @@
                       <div>
                         <strong>Streaming Active</strong>
                         <div>Destination: {{ streamingStatus.streaming_to }}</div>
+                        <div>Messages received: {{ streamingStatus.messages_received }}</div>
                         <div>Messages sent: {{ streamingStatus.streamed_messages }}</div>
                         <div>Active types: {{ streamingStatus.selected_message_types.join(', ') || 'None selected' }}</div>
                       </div>
@@ -719,10 +722,10 @@
                           <span class="sensor-tile-title">Heading</span>
                           <span class="sensor-tile-source" v-if="sensorData.attitude.source">{{ sensorData.attitude.source }}</span>
                         </div>
-                        <span class="sensor-tile-value" :class="{'sensor-tile-na': sensorData.attitude.heading_true === null}">
-                          {{ sensorData.attitude.heading_true !== null ? sensorData.attitude.heading_true.toFixed(0) : '--' }}
+                        <span class="sensor-tile-value" :class="{'sensor-tile-na': sensorData.attitude.heading_true === null && sensorData.attitude.heading_magnetic === null}">
+                          {{ (sensorData.attitude.heading_true ?? sensorData.attitude.heading_magnetic) !== null ? (sensorData.attitude.heading_true ?? sensorData.attitude.heading_magnetic).toFixed(0) : '--' }}
                         </span>
-                        <span class="sensor-tile-unit">° T</span>
+                        <span class="sensor-tile-unit">{{ sensorData.attitude.heading_true !== null ? '° T' : (sensorData.attitude.heading_magnetic !== null ? '° M' : '° T') }}</span>
                         <div class="sparkline-container" v-if="sparklineVisible.heading && hasSparklineData('heading')">
                           <svg class="sparkline" viewBox="0 0 100 30" preserveAspectRatio="none">
                             <path class="sparkline-area" :d="getSparklineArea('heading')"></path>
@@ -901,10 +904,7 @@
                           </div>
                         </div>
                       </div>
-                      <div class="raw-toggle" @click="message.showRaw = !message.showRaw">
-                        {{ message.showRaw ? 'Hide' : 'Show' }} raw data
-                      </div>
-                      <div class="raw-message" v-if="message.showRaw">{{ message.raw }}</div>
+                      <div class="raw-message">{{ message.raw }}</div>
                     </div>
                     <div v-if="parsedMessages.length === 0" class="text-center pa-4">
                       No messages received yet. Connect to a serial port to start receiving messages.
@@ -1143,7 +1143,8 @@
         streamingStatus: {
           streaming_to: null,
           selected_message_types: [],
-          streamed_messages: 0
+          streamed_messages: 0,
+          messages_received: 0
         },
         dialog: false,
         // Connection status
@@ -1234,8 +1235,7 @@
             return {
               ...msg,
               description: this.nmeaDescriptions[msg.type] || 'Unknown Message Type',
-              values: parsed,
-              showRaw: false
+              values: parsed
             };
           });
         },
@@ -1828,12 +1828,14 @@
               if (response.data.success) {
                 this.isStreaming = false;
                 this.streamingStatus.streamed_messages = 0;
+                this.streamingStatus.messages_received = 0;
               }
             } else {
               const response = await axios.post('/api/stream/start');
               if (response.data.success) {
                 this.isStreaming = true;
                 this.streamingStatus.streamed_messages = 0;
+                this.streamingStatus.messages_received = 0;
               }
             }
             // Update streaming status after toggle
@@ -1849,7 +1851,8 @@
             this.streamingStatus = {
               streaming_to: response.data.streaming_to,
               selected_message_types: response.data.selected_message_types || [],
-              streamed_messages: response.data.streamed_messages || 0
+              streamed_messages: response.data.streamed_messages || 0,
+              messages_received: response.data.messages_received ?? 0
             };
             // Only restore streaming if it was active
             if (response.data.is_streaming && !this.isStreaming) {

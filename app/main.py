@@ -74,6 +74,7 @@ class NMEAHandler:
         self.udp_socket = None
         self.is_streaming = False
         self.streamed_messages = 0
+        self.messages_received = 0  # Total NMEA messages received since connection
         self.message_history = []  # Store recent message history
         self.max_history = 100  # Maximum number of messages to keep in history
         
@@ -200,10 +201,7 @@ class NMEAHandler:
             success, message = self.connect_serial(self.state['port'], self.state['baud_rate'])
             if success:
                 self.app_logger.info("Successfully restored previous connection")
-                # Restore streaming state if it was active
-                if self.state['is_streaming']:
-                    self.app_logger.info("Restoring previous streaming state")
-                    self.start_streaming()
+                # Streaming is always started in connect_serial on success
             else:
                 self.app_logger.error(f"Failed to restore previous connection: {message}")
 
@@ -254,6 +252,7 @@ class NMEAHandler:
                     with self._serial_lock:
                         data = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
                     if data.startswith('$'):
+                        self.messages_received += 1
                         # Parse NMEA message
                         msg_type = data.split(',')[0][1:]  # Remove $ and get message type
                         self.nmea_messages.add(msg_type)
@@ -662,44 +661,77 @@ class NMEAHandler:
         devices.sort(key=lambda x: x['device'])
         return devices
 
+    # BlueOS-style path-to-position map (PR 3403). Keys are substrings to match in the
+    # normalized by-path name; sorted longest-first so e.g. 1.1.3 matches before 1.3.
+    # Layout: top-left, top-right / bottom-left, bottom-right (ethernet on left).
+    _USB_PATH_POSITION_MAP = sorted([
+        # Pi4 - full path keys (BlueOS convention)
+        ('platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.3', 'top-left'),
+        ('platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.4', 'bottom-left'),
+        ('platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.1', 'top-right'),
+        ('platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.2', 'bottom-right'),
+        # Pi4 - kernel 1.1.x style (must match before single 1.1 / 1.2 / 1.3)
+        ('-usb-0:1.1.3', 'top-left'),
+        ('-usb-0:1.1.2', 'bottom-left'),
+        ('-usb-0:1.1.4', 'bottom-left'),
+        ('-usb-0:1.3:', 'top-right'),
+        ('-usb-0:1.3-', 'top-right'),
+        ('-usb-0:1.2:', 'bottom-right'),
+        ('-usb-0:1.2-', 'bottom-right'),
+        ('-usb-0:1.4', 'bottom-left'),
+        ('-usb-0:1.1', 'top-right'),
+        # Pi3
+        ('platform-3f980000.usb-usb-0:1.5:1', 'bottom-right'),
+        ('platform-3f980000.usb-usb-0:1.4:1', 'top-right'),
+        ('platform-3f980000.usb-usb-0:1.3:1', 'bottom-left'),
+        ('platform-3f980000.usb-usb-0:1.2:1', 'top-left'),
+        # Pi5
+        ('platform-xhci-hcd.1-usb-0:2', 'bottom-right'),
+        ('platform-xhci-hcd.0-usb-0:2', 'top-right'),
+        ('platform-xhci-hcd.1-usb-0:1', 'top-left'),
+        ('platform-xhci-hcd.0-usb-0:1', 'bottom-left'),
+    ], key=lambda p: -len(p[0]))
+
     def _parse_usb_port(self, path_name):
         """
-        Parse the by-path name to determine physical USB port position.
-        
-        Raspberry Pi 4 USB layout (viewing ports head-on, ethernet on left):
-        +-------------+-------------+
-        |  USB 2.0    |  USB 3.0    |   <- top row  (1.1.3, 1.3)
-        |  (1.1.3)    |   (1.3)     |
-        +-------------+-------------+
-        |  USB 2.0    |  USB 3.0    |   <- bottom row (1.1.2, 1.2)
-        |  (1.1.2)    |   (1.2)     |
-        +-------------+-------------+
-           LEFT COL     RIGHT COL
+        Parse the by-path symlink name to physical USB port position (BlueOS-style).
+        Uses prefix/contains matching so path format variations still resolve.
+        Detects hub connections and returns overlay info when present.
         """
         try:
             import re
-            match = re.search(r'usb-(\d+:\d+(?:\.\d+)*):(\d+\.\d+)', path_name)
-            if match:
-                bus_path = match.group(1)
-                self.app_logger.info(f"Parsing USB path: {path_name} -> bus_path: {bus_path}")
-                
-                # Raspberry Pi 4 mapping - LEFT column is USB 2.0, RIGHT column is USB 3.0
-                # Top row = 1.1.3 (USB2), 1.3 (USB3); bottom row = 1.1.2 (USB2), 1.2 (USB3)
-                if ':1.1.2' in bus_path:
-                    return {'position': 'bottom-left', 'label': 'USB 2.0 Bottom', 'type': 'usb2', 'bus': bus_path}
-                elif ':1.1.3' in bus_path:
-                    return {'position': 'top-left', 'label': 'USB 2.0 Top', 'type': 'usb2', 'bus': bus_path}
-                elif bus_path.endswith(':1.2') or ':1.2:' in bus_path:
-                    return {'position': 'bottom-right', 'label': 'USB 3.0 Bottom', 'type': 'usb3', 'bus': bus_path}
-                elif bus_path.endswith(':1.3') or ':1.3:' in bus_path:
-                    return {'position': 'top-right', 'label': 'USB 3.0 Top', 'type': 'usb3', 'bus': bus_path}
-                elif ':1.1.' in bus_path:
-                    # Generic USB 2.0 hub - log for debugging
-                    self.app_logger.info(f"Generic USB 2.0 hub path: {bus_path}")
-                    return {'position': 'left', 'label': 'USB 2.0', 'type': 'usb2', 'bus': bus_path}
-                else:
-                    return {'position': 'unknown', 'label': bus_path, 'type': 'unknown', 'bus': bus_path}
-            return {'position': 'unknown', 'label': 'Unknown', 'type': 'unknown', 'bus': ''}
+            # Normalize like BlueOS: strip -port0 so we match on the USB root
+            usb_root = path_name.split('-port0')[0] if path_name else ''
+            # Extract bus path for display (e.g. 0:1.1.3)
+            bus_match = re.search(r'usb-(\d+:\d+(?:\.\d+)*)', path_name or '')
+            bus_path = bus_match.group(1) if bus_match else (usb_root or '')
+
+            # Hub detection (BlueOS overlay): ...usb-0:1.4.3:1.0... -> "hub port 3"
+            hub_info = None
+            hub_match = re.search(r'usb-0:(?:[0-9]+\.)+([0-9]+):1\.0', path_name or '')
+            if hub_match:
+                hub_info = f"Via hub, port {hub_match.group(1)}"
+
+            # First matching key wins (map is longest-first for specificity)
+            for key, position in self._USB_PATH_POSITION_MAP:
+                if key in usb_root:
+                    label = position.replace('-', ' ').title()
+                    result = {
+                        'position': position,
+                        'label': label,
+                        'type': 'usb3' if 'right' in position else 'usb2',  # Pi4: right = USB3
+                        'bus': bus_path,
+                    }
+                    if hub_info:
+                        result['hub_info'] = hub_info
+                    self.app_logger.info(f"Parsing USB path: {path_name} -> {position} ({bus_path})")
+                    return result
+
+            self.app_logger.info(f"Parsing USB path: {path_name} -> no match (usb_root={usb_root})")
+            result = {'position': 'unknown', 'label': 'Unknown', 'type': 'unknown', 'bus': bus_path}
+            if hub_info:
+                result['hub_info'] = hub_info
+            return result
         except Exception as e:
             self.app_logger.error(f"Error parsing USB port from {path_name}: {e}")
             return {'position': 'unknown', 'label': 'Unknown', 'type': 'unknown', 'bus': ''}
@@ -1083,6 +1115,13 @@ class NMEAHandler:
                     self.connection_message = f"Connected to {port} at 38400 baud{detected_msg}"
                     self.app_logger.info(self.connection_message)
                     
+                    # Always start streaming on successful connection so the extension can work without opening the UI
+                    if not self.selected_message_types:
+                        default_types = {'HCHDG', 'CHDG', 'HCHDT', 'WIMWD', 'WIMWV', 'GPGGA', 'GPGA', 'WIMDA'}
+                        self.selected_message_types = default_types
+                        self.save_state()
+                    self.start_streaming()
+                    
                     return True, self.connection_message
             
             # All attempts failed
@@ -1117,6 +1156,7 @@ class NMEAHandler:
             self.state['port'] = None
             self.message_history = []  # Clear message history
             self.nmea_messages = set()  # Clear detected message types
+            self.messages_received = 0
             self.detected_baud = None
             self.connection_status = self.CONN_STATUS_DISCONNECTED
             self.connection_message = ''
@@ -1529,7 +1569,8 @@ def get_streaming_status():
         "baud_rate": nmea_handler.state['baud_rate'],
         "selected_message_types": list(nmea_handler.selected_message_types),
         "streaming_to": "host.docker.internal:27000" if nmea_handler.is_streaming else None,
-        "streamed_messages": nmea_handler.streamed_messages
+        "streamed_messages": nmea_handler.streamed_messages,
+        "messages_received": nmea_handler.messages_received
     })
 
 @app.route('/api/message_types/update', methods=['POST'])
