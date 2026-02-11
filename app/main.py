@@ -247,14 +247,32 @@ class NMEAHandler:
             self.reader_thread.join(timeout=1.0)
             self.app_logger.info("Stopped background serial reader thread")
 
+    def _split_nmea_sentences(self, data):
+        """Split a read buffer into individual NMEA sentences (one per yield).
+        Handles multiple sentences in one read (e.g. $HCHDG,...*7C$WIMWV,...*2C) or
+        multiple lines (e.g. $HCHDG,...\\r\\n$WIMWV,...)."""
+        if not data or '$' not in data:
+            return
+        # Normalize line breaks and split into lines
+        for line in re.split(r'[\r\n]+', data):
+            line = line.strip()
+            if not line:
+                continue
+            # One line may contain multiple $... sentences if device concatenated them
+            for part in line.split('$'):
+                part = part.strip()
+                if not part or ',' not in part:
+                    continue
+                yield '$' + part
+
     def _read_serial_loop(self):
         """Background thread function for reading serial data"""
         while not self.should_stop:
             if self.serial_connection and self.serial_connection.is_open:
                 try:
                     with self._serial_lock:
-                        data = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
-                    if data.startswith('$'):
+                        raw = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
+                    for data in self._split_nmea_sentences(raw):
                         self.messages_received += 1
                         # Parse NMEA message type (letters only; avoids HCHDG31.0 from truncated lines)
                         raw_type = data.split(',')[0].lstrip('$').strip()
@@ -523,12 +541,13 @@ class NMEAHandler:
         return self.sensor_data
 
     def start_streaming(self):
-        """Start UDP streaming"""
+        """Start UDP streaming (idempotent: does not reset counter if already streaming)."""
         try:
             if not self.udp_socket:
                 self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            if not self.is_streaming:
+                self.streamed_messages = 0  # Reset counter only when actually starting
             self.is_streaming = True
-            self.streamed_messages = 0  # Reset counter
             self.state['is_streaming'] = True
             self.save_state()
             self.app_logger.info(
@@ -1401,14 +1420,24 @@ def get_sentences():
 
 @app.route('/api/sentences/configure', methods=['POST'])
 def configure_sentence():
-    """Configure a single NMEA sentence (enable/disable, set interval)"""
+    """Configure a single NMEA sentence (enable/disable, set interval).
+    interval: seconds (0.1–5), converted to device tenths-of-seconds internally."""
     data = request.get_json()
     if not data or 'sentence_id' not in data:
         return jsonify({"success": False, "message": "No sentence_id specified"})
     
     sentence_id = data['sentence_id']
     enabled = data.get('enabled', True)
-    interval = data.get('interval', None)
+    interval_raw = data.get('interval', None)
+    # Convert seconds (0.1–5) to tenths (1–50) if provided
+    interval = None
+    if interval_raw is not None:
+        try:
+            sec = float(interval_raw)
+            sec = max(0.1, min(5.0, sec))
+            interval = int(round(sec * 10))
+        except (TypeError, ValueError):
+            pass
     
     success, message = nmea_handler.configure_sentence(sentence_id, enabled, interval)
     return jsonify({"success": success, "message": message})

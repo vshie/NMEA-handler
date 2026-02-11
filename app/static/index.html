@@ -283,6 +283,19 @@
       opacity: 0.8;
     }
     
+    .sentence-interval-input {
+      width: 4em;
+      padding: 2px 6px;
+      font-size: 0.875rem;
+      border: 1px solid rgba(0,0,0,.12);
+      border-radius: 4px;
+      text-align: right;
+    }
+    .sentence-interval-input:disabled {
+      background: #f5f5f5;
+      cursor: not-allowed;
+    }
+    
     /* Log preview */
     .log-preview {
       font-family: 'Courier New', monospace;
@@ -1009,7 +1022,19 @@
                             ></v-switch>
                           </td>
                           <td class="text-center">
-                            <span class="text-caption">{{ sentence.default_interval / 10 }}s</span>
+                            <div class="d-flex align-center justify-center">
+                              <input
+                                type="number"
+                                min="0.1"
+                                max="5"
+                                step="0.1"
+                                :value="getSentenceInterval(sentence)"
+                                @change="setSentenceInterval(sentence.id, $event.target.value)"
+                                :disabled="!connectionInfo.connected"
+                                class="sentence-interval-input"
+                              >
+                              <span class="text-caption ml-1">s</span>
+                            </div>
                           </td>
                           <td class="text-center">
                             <v-icon v-if="sentence.required" color="primary" small>mdi-check-circle</v-icon>
@@ -1168,6 +1193,7 @@
         // Sentence configuration
         sentences: [],
         sentenceConfig: {},  // { sentence_id: enabled }
+        sentenceIntervals: {},  // { sentence_id: interval_seconds (0.1–5) }
         sentenceQueryLoading: false,
         sentenceConfigMessage: '',
         sentenceConfigSuccess: true,
@@ -2035,10 +2061,13 @@
             const response = await axios.get('/api/sentences');
             this.sentences = response.data.sentences;
             
-            // Initialize sentenceConfig with default values
+            // Initialize sentenceConfig and sentenceIntervals with default values
             this.sentences.forEach(sentence => {
               if (!(sentence.id in this.sentenceConfig)) {
                 this.sentenceConfig[sentence.id] = sentence.default_enabled;
+              }
+              if (!(sentence.id in this.sentenceIntervals)) {
+                this.$set(this.sentenceIntervals, sentence.id, sentence.default_interval / 10);
               }
             });
           } catch (error) {
@@ -2051,10 +2080,11 @@
           try {
             const response = await axios.post('/api/sentences/query');
             if (response.data.success) {
-              // Update sentenceConfig with device values
+              // Update sentenceConfig and sentenceIntervals with device values
               const config = response.data.config;
               for (const [id, settings] of Object.entries(config)) {
                 this.$set(this.sentenceConfig, id, settings.enabled);
+                this.$set(this.sentenceIntervals, id, (settings.interval || 10) / 10);
               }
               this.sentenceConfigMessage = 'Configuration loaded from device';
               this.sentenceConfigSuccess = true;
@@ -2070,11 +2100,48 @@
             this.sentenceQueryLoading = false;
           }
         },
-        async toggleSentence(sentenceId, enabled) {
+        getSentenceInterval(sentence) {
+          return this.sentenceIntervals[sentence.id] ?? (sentence.default_interval / 10);
+        },
+        getSentenceIntervalForId(sentenceId) {
+          const s = this.sentences.find(s => s.id === sentenceId);
+          return s ? (this.sentenceIntervals[sentenceId] ?? s.default_interval / 10) : 1;
+        },
+        async applySentenceConfig(sentenceId, enabled, intervalSeconds) {
+          const sec = Math.max(0.1, Math.min(5, intervalSeconds));
           try {
             const response = await axios.post('/api/sentences/configure', {
               sentence_id: sentenceId,
-              enabled: enabled
+              enabled: enabled,
+              interval: sec
+            });
+            if (response.data.success) {
+              this.sentenceConfigMessage = response.data.message;
+              this.sentenceConfigSuccess = true;
+            } else {
+              this.sentenceConfigMessage = response.data.message || 'Failed to configure sentence';
+              this.sentenceConfigSuccess = false;
+            }
+          } catch (error) {
+            console.error('Error configuring sentence:', error);
+            this.sentenceConfigMessage = 'Error configuring sentence';
+            this.sentenceConfigSuccess = false;
+          }
+        },
+        async setSentenceInterval(sentenceId, value) {
+          const num = parseFloat(value);
+          if (isNaN(num)) return;
+          const sec = Math.max(0.1, Math.min(5, num));
+          this.$set(this.sentenceIntervals, sentenceId, sec);
+          await this.applySentenceConfig(sentenceId, this.sentenceConfig[sentenceId], sec);
+        },
+        async toggleSentence(sentenceId, enabled) {
+          const interval = this.getSentenceIntervalForId(sentenceId);
+          try {
+            const response = await axios.post('/api/sentences/configure', {
+              sentence_id: sentenceId,
+              enabled: enabled,
+              interval: interval
             });
             if (response.data.success) {
               this.sentenceConfigMessage = response.data.message;
