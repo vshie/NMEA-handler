@@ -956,14 +956,51 @@ class NMEAHandler:
             cmd = f'$PAMTC,EN,{sentence_id},{enable_flag},{interval}\r\n'
             
             self.app_logger.info(f"Configuring sentence {sentence_id}: enabled={enabled}, interval={interval/10}s")
-            self.serial_connection.write(cmd.encode())
-            time.sleep(0.2)
+            with self._serial_lock:
+                self.serial_connection.write(cmd.encode())
+                time.sleep(0.2)
             
             action = "Enabled" if enabled else "Disabled"
             return True, f"{action} {sentence_id}"
             
         except Exception as e:
             self.app_logger.error(f"Error configuring sentence {sentence_id}: {e}")
+            return False, str(e)
+
+    def configure_sentences_batch(self, changes):
+        """Configure multiple sentences in one locked session.
+        changes: list of dicts: {sentence_id, enabled, interval} where interval is tenths-of-seconds or None."""
+        try:
+            if not self.serial_connection or not self.serial_connection.is_open:
+                return False, "Not connected"
+            if not changes:
+                return True, "No changes to apply"
+            errors = []
+            applied = 0
+            with self._serial_lock:
+                for ch in changes:
+                    sentence_id = ch.get('sentence_id')
+                    enabled = bool(ch.get('enabled', True))
+                    interval = ch.get('interval', None)
+                    if not sentence_id or sentence_id not in self.SUPPORTED_SENTENCES:
+                        errors.append(f"{sentence_id or '(missing id)'}: unknown sentence")
+                        continue
+                    if interval is None:
+                        interval = self.SUPPORTED_SENTENCES[sentence_id].get('default_interval', 10)
+                    enable_flag = 1 if enabled else 0
+                    cmd = f'$PAMTC,EN,{sentence_id},{enable_flag},{interval}\r\n'
+                    try:
+                        self.serial_connection.write(cmd.encode())
+                        applied += 1
+                        time.sleep(0.15)
+                    except Exception as e:
+                        errors.append(f"{sentence_id}: {e}")
+            if errors:
+                self.app_logger.warning(f"Batch configure had errors: {errors}")
+                return False, f"Applied {applied}/{len(changes)} changes; errors: " + "; ".join(errors[:3])
+            return True, f"Applied {applied} sentence changes"
+        except Exception as e:
+            self.app_logger.error(f"Error batch configuring sentences: {e}")
             return False, str(e)
 
     def query_sentence_config(self):
@@ -1462,6 +1499,34 @@ def configure_sentence():
             pass
     
     success, message = nmea_handler.configure_sentence(sentence_id, enabled, interval)
+    return jsonify({"success": success, "message": message})
+
+@app.route('/api/sentences/configure-batch', methods=['POST'])
+def configure_sentences_batch():
+    """Configure multiple NMEA sentences in one call.
+    Body: { changes: [{sentence_id, enabled, interval(seconds 0.1–5)}] }"""
+    data = request.get_json() or {}
+    changes_in = data.get('changes', [])
+    if not isinstance(changes_in, list) or not changes_in:
+        return jsonify({"success": False, "message": "No changes provided"})
+    # Convert interval seconds -> tenths for device
+    changes = []
+    for ch in changes_in:
+        if not isinstance(ch, dict):
+            continue
+        sentence_id = ch.get('sentence_id')
+        enabled = ch.get('enabled', True)
+        interval_raw = ch.get('interval', None)
+        interval = None
+        if interval_raw is not None:
+            try:
+                sec = float(interval_raw)
+                sec = max(0.1, min(5.0, sec))
+                interval = int(round(sec * 10))
+            except (TypeError, ValueError):
+                interval = None
+        changes.append({"sentence_id": sentence_id, "enabled": enabled, "interval": interval})
+    success, message = nmea_handler.configure_sentences_batch(changes)
     return jsonify({"success": success, "message": message})
 
 @app.route('/api/sentences/query', methods=['POST'])

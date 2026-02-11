@@ -586,11 +586,20 @@
                   <div v-if="connectionInfo.connected && lastDataTimestamp" class="text-caption mb-3 grey--text">
                     Data updated {{ dataFreshness(lastDataTimestamp) }}
                   </div>
+                  <div v-else-if="connectionInfo.connected" class="text-caption mb-3 grey--text">
+                    Waiting for sensor data...
+                  </div>
                   
                   <!-- Wind Section -->
-                  <div class="text-overline mb-2">Wind</div>
-                  <v-row class="mb-4">
-                    <v-col cols="12" md="6">
+                  <div
+                    v-if="(sensorData.wind_apparent.speed_kts !== null || sensorData.wind_apparent.angle !== null) || (sensorData.wind_true.speed_kts !== null || sensorData.wind_true.angle !== null || sensorData.wind_true.direction_true !== null || sensorData.wind_true.direction_magnetic !== null)"
+                    class="text-overline mb-2"
+                  >Wind</div>
+                  <v-row
+                    v-if="(sensorData.wind_apparent.speed_kts !== null || sensorData.wind_apparent.angle !== null) || (sensorData.wind_true.speed_kts !== null || sensorData.wind_true.angle !== null || sensorData.wind_true.direction_true !== null || sensorData.wind_true.direction_magnetic !== null)"
+                    class="mb-4"
+                  >
+                    <v-col cols="12" md="6" v-if="sensorData.wind_apparent.speed_kts !== null || sensorData.wind_apparent.angle !== null">
                       <div class="sensor-tile">
                         <v-icon 
                           class="sparkline-toggle" 
@@ -622,7 +631,7 @@
                         </div>
                       </div>
                     </v-col>
-                    <v-col cols="12" md="6">
+                    <v-col cols="12" md="6" v-if="sensorData.wind_true.speed_kts !== null || sensorData.wind_true.angle !== null || sensorData.wind_true.direction_true !== null || sensorData.wind_true.direction_magnetic !== null">
                       <div class="sensor-tile">
                         <v-icon 
                           class="sparkline-toggle" 
@@ -656,9 +665,15 @@
                   </v-row>
 
                   <!-- Atmosphere Section -->
-                  <div class="text-overline mb-2">Atmosphere</div>
-                  <v-row class="mb-4">
-                    <v-col cols="6" md="3">
+                  <div
+                    v-if="sensorData.atmosphere.temperature_c !== null || sensorData.atmosphere.humidity_pct !== null || sensorData.atmosphere.pressure_bar !== null || sensorData.atmosphere.dew_point_c !== null"
+                    class="text-overline mb-2"
+                  >Atmosphere</div>
+                  <v-row
+                    v-if="sensorData.atmosphere.temperature_c !== null || sensorData.atmosphere.humidity_pct !== null || sensorData.atmosphere.pressure_bar !== null || sensorData.atmosphere.dew_point_c !== null"
+                    class="mb-4"
+                  >
+                    <v-col cols="6" md="3" v-if="sensorData.atmosphere.temperature_c !== null">
                       <div class="sensor-tile">
                         <v-icon class="sparkline-toggle" small @click="toggleSparkline('temperature')" :color="sparklineVisible.temperature ? 'primary' : 'grey'">mdi-chart-line</v-icon>
                         <div class="sensor-tile-header">
@@ -677,7 +692,7 @@
                         </div>
                       </div>
                     </v-col>
-                    <v-col cols="6" md="3">
+                    <v-col cols="6" md="3" v-if="sensorData.atmosphere.humidity_pct !== null">
                       <div class="sensor-tile">
                         <v-icon class="sparkline-toggle" small @click="toggleSparkline('humidity')" :color="sparklineVisible.humidity ? 'primary' : 'grey'">mdi-chart-line</v-icon>
                         <div class="sensor-tile-header">
@@ -696,7 +711,7 @@
                         </div>
                       </div>
                     </v-col>
-                    <v-col cols="6" md="3">
+                    <v-col cols="6" md="3" v-if="sensorData.atmosphere.pressure_bar !== null">
                       <div class="sensor-tile">
                         <v-icon class="sparkline-toggle" small @click="toggleSparkline('pressure')" :color="sparklineVisible.pressure ? 'primary' : 'grey'">mdi-chart-line</v-icon>
                         <div class="sensor-tile-header">
@@ -715,7 +730,7 @@
                         </div>
                       </div>
                     </v-col>
-                    <v-col cols="6" md="3">
+                    <v-col cols="6" md="3" v-if="sensorData.atmosphere.dew_point_c !== null">
                       <div class="sensor-tile">
                         <div class="sensor-tile-header">
                           <span class="sensor-tile-title">Dew Point</span>
@@ -730,9 +745,15 @@
                   </v-row>
 
                   <!-- Attitude Section -->
-                  <div class="text-overline mb-2">Attitude</div>
-                  <v-row class="mb-4">
-                    <v-col cols="6" md="3">
+                  <div
+                    v-if="(sensorData.attitude.heading_true !== null || sensorData.attitude.heading_magnetic !== null) || sensorData.attitude.pitch_deg !== null || sensorData.attitude.roll_deg !== null || sensorData.attitude.rate_of_turn !== null"
+                    class="text-overline mb-2"
+                  >Attitude</div>
+                  <v-row
+                    v-if="(sensorData.attitude.heading_true !== null || sensorData.attitude.heading_magnetic !== null) || sensorData.attitude.pitch_deg !== null || sensorData.attitude.roll_deg !== null || sensorData.attitude.rate_of_turn !== null"
+                    class="mb-4"
+                  >
+                    <v-col cols="6" md="3" v-if="sensorData.attitude.heading_true !== null || sensorData.attitude.heading_magnetic !== null">
                       <div class="sensor-tile">
                         <v-icon class="sparkline-toggle" small @click="toggleSparkline('heading')" :color="sparklineVisible.heading ? 'primary' : 'grey'">mdi-chart-line</v-icon>
                         <div class="sensor-tile-header">
@@ -751,7 +772,7 @@
                         </div>
                       </div>
                     </v-col>
-                    <v-col cols="6" md="3">
+                    <v-col cols="6" md="3" v-if="sensorData.attitude.pitch_deg !== null">
                       <div class="sensor-tile">
                         <v-icon class="sparkline-toggle" small @click="toggleSparkline('pitch')" :color="sparklineVisible.pitch ? 'primary' : 'grey'">mdi-chart-line</v-icon>
                         <div class="sensor-tile-header">
@@ -770,7 +791,7 @@
                         </div>
                       </div>
                     </v-col>
-                    <v-col cols="6" md="3">
+                    <v-col cols="6" md="3" v-if="sensorData.attitude.roll_deg !== null">
                       <div class="sensor-tile">
                         <v-icon class="sparkline-toggle" small @click="toggleSparkline('roll')" :color="sparklineVisible.roll ? 'primary' : 'grey'">mdi-chart-line</v-icon>
                         <div class="sensor-tile-header">
@@ -789,7 +810,7 @@
                         </div>
                       </div>
                     </v-col>
-                    <v-col cols="6" md="3">
+                    <v-col cols="6" md="3" v-if="sensorData.attitude.rate_of_turn !== null">
                       <div class="sensor-tile">
                         <v-icon class="sparkline-toggle" small @click="toggleSparkline('rate_of_turn')" :color="sparklineVisible.rate_of_turn ? 'primary' : 'grey'">mdi-chart-line</v-icon>
                         <div class="sensor-tile-header">
@@ -811,9 +832,12 @@
                   </v-row>
 
                   <!-- GPS Section -->
-                  <div class="text-overline mb-2">GPS</div>
-                  <v-row>
-                    <v-col cols="12" md="4">
+                  <div
+                    v-if="sensorData.gps.latitude !== null || sensorData.gps.longitude !== null || sensorData.gps.satellites !== null || !!sensorData.gps.fix_quality || sensorData.gps.speed_kts !== null || sensorData.gps.course_true !== null"
+                    class="text-overline mb-2"
+                  >GPS</div>
+                  <v-row v-if="sensorData.gps.latitude !== null || sensorData.gps.longitude !== null || sensorData.gps.satellites !== null || !!sensorData.gps.fix_quality || sensorData.gps.speed_kts !== null || sensorData.gps.course_true !== null">
+                    <v-col cols="12" md="4" v-if="sensorData.gps.latitude !== null || sensorData.gps.longitude !== null">
                       <div class="sensor-tile">
                         <div class="sensor-tile-header">
                           <span class="sensor-tile-title">Position</span>
@@ -829,7 +853,7 @@
                         </div>
                       </div>
                     </v-col>
-                    <v-col cols="6" md="2">
+                    <v-col cols="6" md="2" v-if="sensorData.gps.satellites !== null">
                       <div class="sensor-tile">
                         <v-icon class="sparkline-toggle" small @click="toggleSparkline('satellites')" :color="sparklineVisible.satellites ? 'primary' : 'grey'">mdi-chart-line</v-icon>
                         <div class="sensor-tile-header">
@@ -846,7 +870,7 @@
                         </div>
                       </div>
                     </v-col>
-                    <v-col cols="6" md="2">
+                    <v-col cols="6" md="2" v-if="!!sensorData.gps.fix_quality">
                       <div class="sensor-tile">
                         <div class="sensor-tile-header">
                           <span class="sensor-tile-title">Fix</span>
@@ -856,7 +880,7 @@
                         </span>
                       </div>
                     </v-col>
-                    <v-col cols="6" md="2">
+                    <v-col cols="6" md="2" v-if="sensorData.gps.speed_kts !== null">
                       <div class="sensor-tile">
                         <v-icon class="sparkline-toggle" small @click="toggleSparkline('gps_speed')" :color="sparklineVisible.gps_speed ? 'primary' : 'grey'">mdi-chart-line</v-icon>
                         <div class="sensor-tile-header">
@@ -874,7 +898,7 @@
                         </div>
                       </div>
                     </v-col>
-                    <v-col cols="6" md="2">
+                    <v-col cols="6" md="2" v-if="sensorData.gps.course_true !== null">
                       <div class="sensor-tile">
                         <v-icon class="sparkline-toggle" small @click="toggleSparkline('gps_course')" :color="sparklineVisible.gps_course ? 'primary' : 'grey'">mdi-chart-line</v-icon>
                         <div class="sensor-tile-header">
@@ -1195,6 +1219,9 @@
         sentences: [],
         sentenceConfig: {},  // { sentence_id: enabled }
         sentenceIntervals: {},  // { sentence_id: interval_seconds (0.1–5) }
+        pendingSentenceChanges: {}, // { sentence_id: { enabled, interval } }
+        sentenceFlushTimer: null,
+        sentenceFlushInProgress: false,
         sentenceQueryLoading: false,
         sentenceConfigMessage: '',
         sentenceConfigSuccess: true,
@@ -2124,26 +2151,44 @@
           const s = this.sentences.find(s => s.id === sentenceId);
           return s ? (this.sentenceIntervals[sentenceId] ?? s.default_interval / 10) : 1;
         },
-        async applySentenceConfig(sentenceId, enabled, intervalSeconds) {
+        queueSentenceChange(sentenceId, enabled, intervalSeconds) {
           const sec = Math.max(0.1, Math.min(5, intervalSeconds));
+          this.$set(this.pendingSentenceChanges, sentenceId, { enabled: !!enabled, interval: sec });
+          this.sentenceConfigMessage = 'Changes queued (applying shortly...)';
+          this.sentenceConfigSuccess = true;
+          if (this.sentenceFlushTimer) {
+            clearTimeout(this.sentenceFlushTimer);
+          }
+          this.sentenceFlushTimer = setTimeout(() => this.flushSentenceChanges(), 3000);
+        },
+        async flushSentenceChanges() {
+          if (this.sentenceFlushInProgress) return;
+          const entries = Object.entries(this.pendingSentenceChanges || {});
+          if (entries.length === 0) return;
+          this.sentenceFlushInProgress = true;
+          const changes = entries.map(([sentence_id, v]) => ({ sentence_id, enabled: v.enabled, interval: v.interval }));
           try {
-            const response = await axios.post('/api/sentences/configure', {
-              sentence_id: sentenceId,
-              enabled: enabled,
-              interval: sec
-            });
+            const response = await axios.post('/api/sentences/configure-batch', { changes });
             if (response.data.success) {
-              this.sentenceConfigMessage = response.data.message;
+              this.sentenceConfigMessage = response.data.message || `Applied ${changes.length} changes`;
               this.sentenceConfigSuccess = true;
+              this.pendingSentenceChanges = {};
             } else {
-              this.sentenceConfigMessage = response.data.message || 'Failed to configure sentence';
+              this.sentenceConfigMessage = response.data.message || 'Failed to apply changes';
               this.sentenceConfigSuccess = false;
+              this.pendingSentenceChanges = {};
             }
           } catch (error) {
-            console.error('Error configuring sentence:', error);
-            this.sentenceConfigMessage = 'Error configuring sentence';
+            console.error('Error applying sentence changes:', error);
+            this.sentenceConfigMessage = 'Error applying sentence changes';
             this.sentenceConfigSuccess = false;
+            this.pendingSentenceChanges = {};
+          } finally {
+            this.sentenceFlushInProgress = false;
           }
+        },
+        async applySentenceConfig(sentenceId, enabled, intervalSeconds) {
+          this.queueSentenceChange(sentenceId, enabled, intervalSeconds);
         },
         async setSentenceInterval(sentenceId, value) {
           const num = parseFloat(value);
@@ -2154,28 +2199,7 @@
         },
         async toggleSentence(sentenceId, enabled) {
           const interval = this.getSentenceIntervalForId(sentenceId);
-          try {
-            const response = await axios.post('/api/sentences/configure', {
-              sentence_id: sentenceId,
-              enabled: enabled,
-              interval: interval
-            });
-            if (response.data.success) {
-              this.sentenceConfigMessage = response.data.message;
-              this.sentenceConfigSuccess = true;
-            } else {
-              this.sentenceConfigMessage = response.data.message || 'Failed to configure sentence';
-              this.sentenceConfigSuccess = false;
-              // Revert the toggle
-              this.$set(this.sentenceConfig, sentenceId, !enabled);
-            }
-          } catch (error) {
-            console.error('Error toggling sentence:', error);
-            this.sentenceConfigMessage = 'Error configuring sentence';
-            this.sentenceConfigSuccess = false;
-            // Revert the toggle
-            this.$set(this.sentenceConfig, sentenceId, !enabled);
-          }
+          this.queueSentenceChange(sentenceId, enabled, interval);
         },
         async saveSentenceConfig() {
           try {
@@ -2243,6 +2267,10 @@
         }, 1000);
       },
       beforeDestroy() {
+        if (this.sentenceFlushTimer) {
+          clearTimeout(this.sentenceFlushTimer);
+          this.sentenceFlushTimer = null;
+        }
         if (this.freshnessInterval) {
           clearInterval(this.freshnessInterval);
           this.freshnessInterval = null;
