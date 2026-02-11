@@ -504,6 +504,18 @@
                 </v-col>
               </v-row>
               
+              <!-- Stay at 4800 option (avoids mixed/garbled data from baud switching) -->
+              <v-row v-if="!connectionInfo.connected && !isConnecting">
+                <v-col cols="12">
+                  <v-checkbox
+                    v-model="stayAt4800Baud"
+                    label="Stay at 4800 baud only (recommended if you see mixed or garbled data)"
+                    hide-details
+                    dense
+                    class="mt-0"
+                  ></v-checkbox>
+                </v-col>
+              </v-row>
               <!-- Action Buttons -->
               <v-row>
                 <v-col cols="12">
@@ -526,6 +538,16 @@
                     Cancel
                   </v-btn>
                   <template v-if="connectionInfo.connected">
+                    <v-btn
+                      v-if="connectionInfo.baud_rate === 38400"
+                      color="secondary"
+                      @click="forceDeviceTo4800"
+                      class="mr-2"
+                      title="Send $PAMTC,BAUD,4800 and reopen at 4800 (use if device was left at 38400 and you see mixed data)"
+                    >
+                      <v-icon left>mdi-numeric</v-icon>
+                      Force device to 4800 baud
+                    </v-btn>
                     <v-btn
                       color="error"
                       @click="disconnectPort"
@@ -1279,6 +1301,7 @@
           required_sentences: []
         },
         connectionPollInterval: null,
+        stayAt4800Baud: false,  // When true, connect at 4800 and never switch to 38400 (avoids mixed-baud issues)
         // Freshness tick so "Xs ago" updates every second
         freshnessTick: 0,
         freshnessInterval: null,
@@ -2025,9 +2048,9 @@
           this.startConnectionStatusPolling();
           
           try {
-            const response = await axios.post('/api/serial/select', {
-              port: this.selectedPort
-            });
+            const payload = { port: this.selectedPort };
+            if (this.stayAt4800Baud) payload.baud_rate = 4800;
+            const response = await axios.post('/api/serial/select', payload);
             
             // Stop connection status polling
             this.stopConnectionStatusPolling();
@@ -2140,6 +2163,20 @@
             }
           } catch (error) {
             console.error('Error disconnecting:', error);
+          }
+        },
+        async forceDeviceTo4800() {
+          try {
+            const response = await axios.post('/api/serial/change_baud', { baud_rate: 4800 });
+            if (response.data.success) {
+              await this.fetchConnectionStatus();
+              await this.checkStreamingStatus();
+            } else {
+              this.connectionInfo.message = response.data.message || 'Failed to switch device to 4800';
+            }
+          } catch (error) {
+            console.error('Error forcing 4800 baud:', error);
+            this.connectionInfo.message = 'Error: ' + (error.response?.data?.message || error.message);
           }
         },
         async fetchSerialInfo() {
@@ -2343,18 +2380,28 @@
             const pastGrace = connectedSince !== null && ((now - connectedSince) > threshold);
             const currentlyOn = !!this.sentenceConfig[id];
             if (receiving && !currentlyOn) {
+              // #region agent log
+              fetch('http://127.0.0.1:7242/ingest/7050f155-ae55-42cf-9654-50c506ff56ff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.html:reconcileSentenceSwitches',message:'reconcile set ON',data:{id,receiving,currentlyOn,lastSeen},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
+              // #endregion
               this.$set(this.sentenceConfig, id, true);
             } else if (!receiving && currentlyOn && pastGrace) {
+              // #region agent log
+              fetch('http://127.0.0.1:7242/ingest/7050f155-ae55-42cf-9654-50c506ff56ff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.html:reconcileSentenceSwitches',message:'reconcile set OFF',data:{id,receiving,currentlyOn,pastGrace},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
+              // #endregion
               this.$set(this.sentenceConfig, id, false);
             }
           });
         },
         async flushSentenceChanges() {
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/7050f155-ae55-42cf-9654-50c506ff56ff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.html:flushSentenceChanges',message:'flush start',data:{pendingCount:Object.keys(this.pendingSentenceChanges||{}).length,inProgress:this.sentenceFlushInProgress},timestamp:Date.now(),hypothesisId:'H5'})}).catch(()=>{});
+          // #endregion
           if (this.sentenceFlushInProgress) return;
           const entries = Object.entries(this.pendingSentenceChanges || {});
           if (entries.length === 0) return;
           this.sentenceFlushInProgress = true;
           const changes = entries.map(([sentence_id, v]) => ({ sentence_id, enabled: v.enabled, interval: v.interval }));
+          const numChanges = changes.length;
           try {
             const response = await axios.post('/api/sentences/configure-batch', { changes });
             if (response.data.success) {
@@ -2372,6 +2419,9 @@
             this.sentenceConfigSuccess = false;
             this.pendingSentenceChanges = {};
           } finally {
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/7050f155-ae55-42cf-9654-50c506ff56ff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.html:flushSentenceChanges',message:'flush end',data:{success:this.sentenceConfigSuccess,changesCount:numChanges},timestamp:Date.now(),hypothesisId:'H5'})}).catch(()=>{});
+            // #endregion
             this.sentenceFlushInProgress = false;
           }
         },
@@ -2386,6 +2436,9 @@
           await this.applySentenceConfig(sentenceId, this.sentenceConfig[sentenceId], sec);
         },
         async toggleSentence(sentenceId, enabled) {
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/7050f155-ae55-42cf-9654-50c506ff56ff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.html:toggleSentence',message:'toggleSentence',data:{sentenceId,enabled,typeofEnabled:typeof enabled,configValue:this.sentenceConfig[sentenceId]},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
+          // #endregion
           const interval = this.getSentenceIntervalForId(sentenceId);
           this.queueSentenceChange(sentenceId, enabled, interval);
         },

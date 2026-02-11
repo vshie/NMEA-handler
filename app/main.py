@@ -1049,37 +1049,35 @@ class NMEAHandler:
         """
         try:
             self.connection_status = self.CONN_STATUS_SWITCHING_BAUD
-            self.connection_message = 'Switching to 38400 baud...'
-            
-            # Step 1: Ensure periodic sentences are on at 4800 (device may have been stopped)
-            self.app_logger.info("Enabling periodic sentences at 4800 baud")
-            self.serial_connection.write(b'$PAMTX,1\r\n')
+            self.connection_message = (
+                'Per manual: suspending transmission ($PAMTX), changing baud to 38400, then resuming ($PAMTX,1)...'
+            )
+
+            # Per WX Series manual: suspend transmission first, then change baud, then resume at new baud.
+
+            # Step 1: $PAMTX (no argument) at 4800 = temporarily disable transmission of periodic sentences
+            self.app_logger.info("Sending $PAMTX to suspend periodic transmission at 4800 baud")
+            self.serial_connection.write(b'$PAMTX\r\n')
             time.sleep(0.3)
-            
-            # Step 2: Send baud rate change command (device keeps sending at 4800 until it switches)
-            self.app_logger.info("Sending baud rate change command to 38400")
+
+            # Step 2: $PAMTC,BAUD,38400 at 4800; unit finishes current sentence at 4800 then switches to 38400
+            self.app_logger.info("Sending $PAMTC,BAUD,38400 at 4800 baud")
             self.serial_connection.write(b'$PAMTC,BAUD,38400\r\n')
-            time.sleep(1)
-            
-            # Step 3: Continue reading at 4800 until messages stop or become garbled
-            self.app_logger.info("Watching for device baud switch (messages stop or garbled at 4800)...")
-            self.serial_connection.timeout = 0.5
-            no_data_deadline = time.time() + 2.5  # if no data for 2.5s, assume switched
-            while time.time() < no_data_deadline:
-                raw = self.serial_connection.readline()
-                if raw:
-                    no_data_deadline = time.time() + 2.5  # got something, extend deadline
-                    line = raw.decode('utf-8', errors='ignore').strip()
-                    if line and not line.startswith('$'):
-                        self.app_logger.info("Device appears to have switched (garbled at 4800)")
-                        break
-                time.sleep(0.05)
-            self.serial_connection.timeout = 1
-            
-            # Step 4: Close and reopen at 38400
-            self.serial_connection.close()
             time.sleep(0.5)
-            
+
+            # Step 3: Delay to allow reception of any remaining queued sentences at 4800 baud
+            self.app_logger.info("Draining remaining 4800 baud output...")
+            self.serial_connection.timeout = 0.2
+            drain_deadline = time.time() + 1.0
+            while time.time() < drain_deadline:
+                raw = self.serial_connection.readline()
+                if not raw:
+                    break
+            self.serial_connection.timeout = 1
+
+            # Step 4: Change host serial port to 38400 baud
+            self.serial_connection.close()
+            time.sleep(0.3)
             self.app_logger.info("Reopening connection at 38400 baud")
             self.serial_connection = serial.Serial(
                 port=port,
@@ -1088,9 +1086,14 @@ class NMEAHandler:
                 exclusive=True
             )
             self.state['baud_rate'] = 38400
-            time.sleep(0.5)
-            
-            # Step 5: Verify we're receiving valid NMEA at 38400
+            time.sleep(0.2)
+
+            # Step 5: $PAMTX,1 at 38400 baud to resume transmission of periodic sentences
+            self.app_logger.info("Sending $PAMTX,1 to resume transmission at 38400 baud")
+            self.serial_connection.write(b'$PAMTX,1\r\n')
+            time.sleep(0.3)
+
+            # Step 6: Verify we're receiving valid NMEA at 38400
             start_time = time.time()
             while time.time() - start_time < 5:
                 data = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
@@ -1098,7 +1101,7 @@ class NMEAHandler:
                     self.app_logger.info("Confirmed communication at 38400 baud")
                     return True, "Switched to 38400 baud"
                 time.sleep(0.1)
-            
+
             return False, "No response after baud rate switch"
             
         except Exception as e:
@@ -1195,6 +1198,15 @@ class NMEAHandler:
                 return True, "No changes to apply"
             errors = []
             applied = 0
+            # #region agent log
+            try:
+                _dbg_path = Path(__file__).resolve().parent.parent / '.cursor' / 'debug.log'
+                _dbg_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(_dbg_path, 'a') as _f:
+                    _f.write(json.dumps({'id': 'batch_lock_enter', 'timestamp': time.time(), 'location': 'main.py:configure_sentences_batch', 'message': 'batch lock enter', 'data': {'n_changes': len(changes)}, 'hypothesisId': 'H3'}) + '\n')
+            except Exception:
+                pass
+            # #endregion
             with self._serial_lock:
                 for ch in changes:
                     sentence_id = ch.get('sentence_id')
@@ -1216,6 +1228,14 @@ class NMEAHandler:
                         time.sleep(0.15)
                     except Exception as e:
                         errors.append(f"{sentence_id}: {e}")
+            # #region agent log
+            try:
+                _dbg_path = Path(__file__).resolve().parent.parent / '.cursor' / 'debug.log'
+                with open(_dbg_path, 'a') as _f:
+                    _f.write(json.dumps({'id': 'batch_lock_exit', 'timestamp': time.time(), 'location': 'main.py:configure_sentences_batch', 'message': 'batch lock exit', 'data': {'applied': applied, 'n_changes': len(changes)}, 'hypothesisId': 'H3'}) + '\n')
+            except Exception:
+                pass
+            # #endregion
             if applied > 0:
                 self.save_state()
             if errors:
@@ -1238,6 +1258,15 @@ class NMEAHandler:
             if not self.serial_connection or not self.serial_connection.is_open:
                 return False, "Not connected"
             
+            # #region agent log
+            try:
+                _dbg_path = Path(__file__).resolve().parent.parent / '.cursor' / 'debug.log'
+                _dbg_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(_dbg_path, 'a') as _f:
+                    _f.write(json.dumps({'id': 'query_lock_enter', 'timestamp': time.time(), 'location': 'main.py:query_sentence_config', 'message': 'query lock enter (will hold up to 5s)', 'data': {}, 'hypothesisId': 'H4'}) + '\n')
+            except Exception:
+                pass
+            # #endregion
             with self._serial_lock:
                 # Clear any pending data
                 self.serial_connection.reset_input_buffer()
@@ -1281,7 +1310,14 @@ class NMEAHandler:
                     if len(config) >= len(self.SUPPORTED_SENTENCES):
                         break
                     time.sleep(0.05)
-            
+            # #region agent log
+            try:
+                _dbg_path = Path(__file__).resolve().parent.parent / '.cursor' / 'debug.log'
+                with open(_dbg_path, 'a') as _f:
+                    _f.write(json.dumps({'id': 'query_lock_exit', 'timestamp': time.time(), 'location': 'main.py:query_sentence_config', 'message': 'query lock exit', 'data': {'config_count': len(config)}, 'hypothesisId': 'H4'}) + '\n')
+            except Exception:
+                pass
+            # #endregion
             if config:
                 return True, config
             else:
@@ -1401,8 +1437,9 @@ class NMEAHandler:
                     self.detected_baud = current_baud
                     self.state['port'] = port
                     
-                    if current_baud == 4800:
-                        # Connected at 4800, need to switch to 38400
+                    stay_at_4800 = (baud_rate == 4800)
+                    if current_baud == 4800 and not stay_at_4800:
+                        # Connected at 4800, switch to 38400 unless user requested 4800 only
                         self.app_logger.info("Connected at 4800 baud, switching to 38400...")
                         success, msg = self._switch_to_38400(port)
                         if not success:
@@ -1412,8 +1449,17 @@ class NMEAHandler:
                                 self.serial_connection.close()
                             self.serial_connection = None
                             continue
+                    elif current_baud == 4800 and stay_at_4800:
+                        self.app_logger.info("Staying at 4800 baud (no baud switch).")
+                    elif current_baud == 38400 and stay_at_4800:
+                        # User requested 4800 but device was already at 38400; switch device to 4800
+                        self.app_logger.info("User requested 4800 only; switching device from 38400 to 4800...")
+                        success, msg = self.change_baud_rate(4800)
+                        if not success:
+                            self.app_logger.warning(f"Could not switch device to 4800: {msg}")
+                        # Continue; reader will be started in common path below
                     
-                    # Now at 38400 baud - enable required sentences
+                    # Enable required sentences (works at 4800 or 38400)
                     success, msg = self.enable_required_sentences()
                     if not success:
                         self.app_logger.warning(f"Failed to enable sentences: {msg}")
@@ -1431,14 +1477,20 @@ class NMEAHandler:
                     # Start the reader thread
                     self.start_reader_thread()
                     
-                    # Update state
-                    self.state['baud_rate'] = 38400
+                    # Update state from actual serial baud (e.g. 4800 after change_baud_rate(4800))
+                    final_baud = self.serial_connection.baudrate if self.serial_connection else 38400
+                    self.state['baud_rate'] = final_baud
                     self.save_state()
                     self.connected_since = time.time()
                     
                     self.connection_status = self.CONN_STATUS_CONNECTED
-                    detected_msg = f" (detected at {self.detected_baud})" if self.detected_baud == 38400 else " (switched from 4800)"
-                    self.connection_message = f"Connected to {port} at 38400 baud{detected_msg}"
+                    if final_baud == 4800:
+                        detected_msg = " (4800 only, no switch)"
+                    elif self.detected_baud == 38400:
+                        detected_msg = " (detected at 38400)"
+                    else:
+                        detected_msg = " (switched from 4800)"
+                    self.connection_message = f"Connected to {port} at {final_baud} baud{detected_msg}"
                     self.app_logger.info(self.connection_message)
                     self._sse_broadcast('connection', self.get_connection_info())
                     
