@@ -704,8 +704,12 @@ class NMEAHandler:
     def _try_baud_rate(self, port, baud_rate, timeout=3):
         """
         Try to connect at a specific baud rate and wait for valid NMEA data.
+        Sends enable periodic ($PAMTX,1) as soon as the port is open so a stopped
+        device can start sending before we check for incoming data.
+        At 4800 baud we require at least 5 messages before considering connected.
         Returns (success, serial_connection or None)
         """
+        min_messages = 5 if baud_rate == 4800 else 1
         try:
             self.app_logger.info(f"Trying {port} at {baud_rate} baud...")
             conn = serial.Serial(
@@ -713,21 +717,26 @@ class NMEAHandler:
                 baudrate=baud_rate,
                 timeout=1
             )
+            # Start periodic messages before checking for data (device may have been stopped)
+            conn.write(b'$PAMTX,1\r\n')
+            time.sleep(0.3)
             
             start_time = time.time()
+            valid_count = 0
             while time.time() - start_time < timeout:
                 try:
                     data = conn.readline().decode('utf-8', errors='ignore').strip()
                     if data.startswith('$'):
-                        # Valid NMEA sentence received
+                        valid_count += 1
                         msg_type = data.split(',')[0][1:]
-                        self.app_logger.info(f"Received valid NMEA at {baud_rate} baud: {msg_type}")
-                        return True, conn
+                        self.app_logger.info(f"Received valid NMEA at {baud_rate} baud: {msg_type} ({valid_count}/{min_messages})")
+                        if valid_count >= min_messages:
+                            return True, conn
                 except Exception as e:
                     self.app_logger.error(f"Error reading at {baud_rate} baud: {e}")
                 time.sleep(0.1)
             
-            # No valid data received, close connection
+            # Not enough valid data received, close connection
             conn.close()
             return False, None
             
@@ -738,34 +747,41 @@ class NMEAHandler:
     def _switch_to_38400(self, port):
         """
         Switch the device from 4800 to 38400 baud.
-        Assumes we're currently connected at 4800 baud. We do not disable periodic
-        messages so the device keeps sending and we can verify the switch.
+        Assumes we're currently connected at 4800 baud. After sending the baud change
+        command we keep reading at 4800; when messages stop or become garbled we
+        close and reopen at 38400.
         Returns (success, message)
         """
         try:
             self.connection_status = self.CONN_STATUS_SWITCHING_BAUD
             self.connection_message = 'Switching to 38400 baud...'
             
-            # Step 1: Send baud rate change command (device keeps sending at 4800 until it switches)
+            # Step 1: Ensure periodic sentences are on at 4800 (device may have been stopped)
+            self.app_logger.info("Enabling periodic sentences at 4800 baud")
+            self.serial_connection.write(b'$PAMTX,1\r\n')
+            time.sleep(0.3)
+            
+            # Step 2: Send baud rate change command (device keeps sending at 4800 until it switches)
             self.app_logger.info("Sending baud rate change command to 38400")
             self.serial_connection.write(b'$PAMTC,BAUD,38400\r\n')
-            time.sleep(2)
+            time.sleep(1)
             
-            # Step 2: Optional - wait for garbled data at 4800 (device has switched to 38400)
-            self.app_logger.info("Checking for device baud switch (garbled at 4800)...")
+            # Step 3: Continue reading at 4800 until messages stop or become garbled
+            self.app_logger.info("Watching for device baud switch (messages stop or garbled at 4800)...")
             self.serial_connection.timeout = 0.5
-            start = time.time()
-            while time.time() - start < 2.5:
+            no_data_deadline = time.time() + 2.5  # if no data for 2.5s, assume switched
+            while time.time() < no_data_deadline:
                 raw = self.serial_connection.readline()
                 if raw:
+                    no_data_deadline = time.time() + 2.5  # got something, extend deadline
                     line = raw.decode('utf-8', errors='ignore').strip()
                     if line and not line.startswith('$'):
-                        self.app_logger.info("Device appears to have switched (non-NMEA at 4800)")
+                        self.app_logger.info("Device appears to have switched (garbled at 4800)")
                         break
                 time.sleep(0.05)
             self.serial_connection.timeout = 1
             
-            # Step 3: Close and reopen at 38400
+            # Step 4: Close and reopen at 38400
             self.serial_connection.close()
             time.sleep(0.5)
             
@@ -778,7 +794,7 @@ class NMEAHandler:
             self.state['baud_rate'] = 38400
             time.sleep(0.5)
             
-            # Step 4: Verify we're receiving valid NMEA at 38400
+            # Step 5: Verify we're receiving valid NMEA at 38400
             start_time = time.time()
             while time.time() - start_time < 5:
                 data = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
@@ -797,6 +813,7 @@ class NMEAHandler:
         """
         Enable the NMEA sentences required for dashboard display.
         Should only be called when connected at 38400 baud.
+        Always enables periodic transmission first in case the device was previously stopped.
         Returns (success, message)
         """
         try:
@@ -805,6 +822,11 @@ class NMEAHandler:
             
             if not self.serial_connection or not self.serial_connection.is_open:
                 return False, "Not connected"
+            
+            # Ensure periodic sentences are on (device may have been stopped by a previous session)
+            self.app_logger.info("Enabling periodic sentences")
+            self.serial_connection.write(b'$PAMTX,1\r\n')
+            time.sleep(0.3)
             
             enabled_count = 0
             for sentence_id in self.REQUIRED_SENTENCES:
