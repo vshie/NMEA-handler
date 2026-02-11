@@ -569,6 +569,9 @@
                   <v-alert v-if="!connectionInfo.connected" type="info" dense class="mb-4">
                     Connect to a WX200 device to see sensor data.
                   </v-alert>
+                  <div v-if="connectionInfo.connected && lastDataTimestamp" class="text-caption mb-3 grey--text">
+                    Data updated {{ dataFreshness(lastDataTimestamp) }}
+                  </div>
                   
                   <!-- Wind Section -->
                   <div class="text-overline mb-2">Wind</div>
@@ -1159,6 +1162,9 @@
           required_sentences: []
         },
         connectionPollInterval: null,
+        // Freshness tick so "Xs ago" updates every second
+        freshnessTick: 0,
+        freshnessInterval: null,
         // Sentence configuration
         sentences: [],
         sentenceConfig: {},  // { sentence_id: enabled }
@@ -1260,6 +1266,20 @@
         },
         pressureUnit() {
           return this.unitSystem === 'metric' ? 'hPa' : 'inHg';
+        },
+        // Most recent sensor data timestamp (for freshness display)
+        lastDataTimestamp() {
+          this.freshnessTick; // depend on tick so display updates every second
+          let latest = null;
+          const keys = ['wind_apparent', 'wind_true', 'atmosphere', 'attitude', 'gps', 'time'];
+          for (const k of keys) {
+            const ts = this.sensorData[k] && this.sensorData[k].timestamp;
+            if (ts) {
+              const t = new Date(ts).getTime();
+              if (!isNaN(t) && (latest === null || t > latest)) latest = t;
+            }
+          }
+          return latest !== null ? new Date(latest).toISOString() : null;
         }
       },
       watch: {
@@ -1286,6 +1306,18 @@
           if (!timestamp) return '';
           const date = new Date(timestamp);
           return date.toLocaleTimeString();
+        },
+        // How long ago the data was received: "3s ago" or "2m ago" (minutes after 1)
+        dataFreshness(isoTimestamp) {
+          if (!isoTimestamp) return '';
+          const then = new Date(isoTimestamp).getTime();
+          if (isNaN(then)) return '';
+          const now = this.freshnessTick || Date.now();
+          let sec = Math.floor((now - then) / 1000);
+          if (sec < 0) return 'just now';
+          if (sec < 60) return sec + 's ago';
+          const min = Math.floor(sec / 60);
+          return min + 'm ago';
         },
         getUsbPortColor(usbPort) {
           if (!usbPort) return 'grey';
@@ -2121,8 +2153,16 @@
         this.fetchSensorData();
         this.fetchSensorHistory();
         this.fetchLogsInfo();
+        this.freshnessTick = Date.now();
+        this.freshnessInterval = setInterval(() => {
+          this.freshnessTick = Date.now();
+        }, 1000);
       },
       beforeDestroy() {
+        if (this.freshnessInterval) {
+          clearInterval(this.freshnessInterval);
+          this.freshnessInterval = null;
+        }
         this.stopPolling();
         this.stopConnectionStatusPolling();
       }

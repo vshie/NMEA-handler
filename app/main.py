@@ -9,6 +9,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 import datetime
+import re
 import threading
 import time
 
@@ -91,6 +92,8 @@ class NMEAHandler:
         }
         # Lock so only one consumer reads from serial (reader thread vs sentence query)
         self._serial_lock = threading.Lock()
+        # Throttle "no data" serial read errors (log at most once per 30s)
+        self._last_serial_read_error_log = 0
         
         # Aggregated sensor data for dashboard display
         self.sensor_data = {
@@ -253,8 +256,10 @@ class NMEAHandler:
                         data = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
                     if data.startswith('$'):
                         self.messages_received += 1
-                        # Parse NMEA message
-                        msg_type = data.split(',')[0][1:]  # Remove $ and get message type
+                        # Parse NMEA message type (letters only; avoids HCHDG31.0 from truncated lines)
+                        raw_type = data.split(',')[0].lstrip('$').strip()
+                        m = re.match(r'^[A-Z]+', raw_type) if raw_type else None
+                        msg_type = m.group(0) if m else (raw_type or '')
                         self.nmea_messages.add(msg_type)
                         
                         # Update aggregated sensor data
@@ -276,7 +281,15 @@ class NMEAHandler:
                         if self.is_streaming and msg_type in self.selected_message_types:
                             self.stream_message(data, msg_type)
                 except Exception as e:
-                    self.app_logger.error(f"Error in serial reader thread: {e}")
+                    err_str = str(e)
+                    # Throttle "read but no data" to avoid log flood and possible I/O contention
+                    if "returned no data" in err_str or "multiple access" in err_str:
+                        now = time.time()
+                        if now - self._last_serial_read_error_log >= 30:
+                            self._last_serial_read_error_log = now
+                            self.app_logger.warning(f"Serial read: {err_str} (further occurrences throttled)")
+                    else:
+                        self.app_logger.error(f"Error in serial reader thread: {e}")
             time.sleep(0.1)  # Small delay to prevent CPU overuse
 
     def _parse_nmea_for_dashboard(self, raw_data, msg_type):
@@ -750,7 +763,8 @@ class NMEAHandler:
             conn = serial.Serial(
                 port=port,
                 baudrate=baud_rate,
-                timeout=1
+                timeout=1,
+                exclusive=True
             )
             # Start periodic messages before checking for data (device may have been stopped)
             conn.write(b'$PAMTX,1\r\n')
@@ -824,7 +838,8 @@ class NMEAHandler:
             self.serial_connection = serial.Serial(
                 port=port,
                 baudrate=38400,
-                timeout=1
+                timeout=1,
+                exclusive=True
             )
             self.state['baud_rate'] = 38400
             time.sleep(0.5)
@@ -1249,7 +1264,8 @@ class NMEAHandler:
             self.serial_connection = serial.Serial(
                 port=self.state['port'],
                 baudrate=new_baud_rate,
-                timeout=1
+                timeout=1,
+                exclusive=True
             )
             time.sleep(0.5)  # Wait for connection to stabilize
 
