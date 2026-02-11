@@ -738,49 +738,52 @@ class NMEAHandler:
     def _switch_to_38400(self, port):
         """
         Switch the device from 4800 to 38400 baud.
-        Assumes we're currently connected at 4800 baud.
+        Assumes we're currently connected at 4800 baud. We do not disable periodic
+        messages so the device keeps sending and we can verify the switch.
         Returns (success, message)
         """
         try:
             self.connection_status = self.CONN_STATUS_SWITCHING_BAUD
             self.connection_message = 'Switching to 38400 baud...'
             
-            # Step 1: Disable periodic sentences
-            self.app_logger.info("Disabling periodic sentences before baud change")
-            self.serial_connection.write(b'$PAMTX\r\n')
-            time.sleep(0.5)
-            
-            # Step 2: Send baud rate change command
+            # Step 1: Send baud rate change command (device keeps sending at 4800 until it switches)
             self.app_logger.info("Sending baud rate change command to 38400")
             self.serial_connection.write(b'$PAMTC,BAUD,38400\r\n')
-            time.sleep(1)
+            time.sleep(2)
             
-            # Step 3: Close current connection
+            # Step 2: Optional - wait for garbled data at 4800 (device has switched to 38400)
+            self.app_logger.info("Checking for device baud switch (garbled at 4800)...")
+            self.serial_connection.timeout = 0.5
+            start = time.time()
+            while time.time() - start < 2.5:
+                raw = self.serial_connection.readline()
+                if raw:
+                    line = raw.decode('utf-8', errors='ignore').strip()
+                    if line and not line.startswith('$'):
+                        self.app_logger.info("Device appears to have switched (non-NMEA at 4800)")
+                        break
+                time.sleep(0.05)
+            self.serial_connection.timeout = 1
+            
+            # Step 3: Close and reopen at 38400
             self.serial_connection.close()
             time.sleep(0.5)
             
-            # Step 4: Reopen at 38400 baud
             self.app_logger.info("Reopening connection at 38400 baud")
             self.serial_connection = serial.Serial(
                 port=port,
                 baudrate=38400,
                 timeout=1
             )
+            self.state['baud_rate'] = 38400
             time.sleep(0.5)
             
-            # Step 5: Re-enable periodic sentences
-            self.app_logger.info("Re-enabling periodic sentences")
-            self.serial_connection.write(b'$PAMTX,1\r\n')
-            time.sleep(0.3)
-            
-            # Verify we're receiving data at 38400
+            # Step 4: Verify we're receiving valid NMEA at 38400
             start_time = time.time()
-            while time.time() - start_time < 3:
+            while time.time() - start_time < 5:
                 data = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
                 if data.startswith('$'):
-                    self.app_logger.info(f"Confirmed communication at 38400 baud")
-                    # Update state immediately so any save_state() (e.g. from API) persists 38400
-                    self.state['baud_rate'] = 38400
+                    self.app_logger.info("Confirmed communication at 38400 baud")
                     return True, "Switched to 38400 baud"
                 time.sleep(0.1)
             
