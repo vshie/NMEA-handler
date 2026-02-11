@@ -76,8 +76,12 @@ class NMEAHandler:
         self.is_streaming = False
         self.streamed_messages = 0
         self.messages_received = 0  # Total NMEA messages received since connection
+        self.connected_since = None  # epoch seconds when connection established
         self.message_history = []  # Store recent message history
         self.max_history = 100  # Maximum number of messages to keep in history
+        # Last-seen timestamps for configured sentence IDs (used for UI sync)
+        # { sentence_id: epoch_seconds_last_seen }
+        self.sentence_last_seen = {}
         
         # Connection status tracking
         self.connection_status = self.CONN_STATUS_DISCONNECTED
@@ -88,7 +92,8 @@ class NMEAHandler:
             'port': None,
             'baud_rate': 4800,
             'is_streaming': False,
-            'selected_message_types': []
+            'selected_message_types': [],
+            'sentence_config': {}  # { sentence_id: { "enabled": bool, "interval": int (tenths) } }
         }
         # Lock so only one consumer reads from serial (reader thread vs sentence query)
         self._serial_lock = threading.Lock()
@@ -213,10 +218,13 @@ class NMEAHandler:
         try:
             if self.state_path.exists():
                 with open(self.state_path, 'r') as f:
-                    self.state = json.load(f)
-                    self.selected_message_types = set(self.state.get('selected_message_types', []))
-                    self.is_streaming = self.state.get('is_streaming', False)
-                    self.app_logger.info(f"Loaded saved state: port={self.state['port']}, baud_rate={self.state['baud_rate']}, streaming={self.is_streaming}")
+                    loaded = json.load(f)
+                self.state.update(loaded)
+                if 'sentence_config' not in self.state or not isinstance(self.state['sentence_config'], dict):
+                    self.state['sentence_config'] = {}
+                self.selected_message_types = set(self.state.get('selected_message_types', []))
+                self.is_streaming = self.state.get('is_streaming', False)
+                self.app_logger.info(f"Loaded saved state: port={self.state['port']}, baud_rate={self.state['baud_rate']}, streaming={self.is_streaming}")
         except Exception as e:
             self.app_logger.error(f"Error loading state: {e}")
 
@@ -225,6 +233,8 @@ class NMEAHandler:
         try:
             self.state['selected_message_types'] = list(self.selected_message_types)
             self.state['is_streaming'] = self.is_streaming
+            if 'sentence_config' not in self.state:
+                self.state['sentence_config'] = {}
             with open(self.state_path, 'w') as f:
                 json.dump(self.state, f)
             self.app_logger.info(f"Saved state: port={self.state['port']}, baud_rate={self.state['baud_rate']}, streaming={self.is_streaming}")
@@ -265,6 +275,44 @@ class NMEAHandler:
                     continue
                 yield '$' + part
 
+    def _map_msg_to_sentence_id(self, raw_line, msg_type):
+        """Map an incoming NMEA msg to a device sentence_id (SUPPORTED_SENTENCES key).
+        Returns None if no reliable mapping exists."""
+        try:
+            if not msg_type:
+                return None
+
+            # WIMWV maps to MWVR/MWVT depending on R/T field
+            if msg_type == 'WIMWV':
+                fields = raw_line.split('*')[0].split(',')
+                ref = fields[2] if len(fields) > 2 else ''
+                if ref == 'T':
+                    return 'MWVT'
+                # Default to apparent/relative
+                return 'MWVR'
+
+            # YXXDR is the XDR sentence; for our dashboard we use pitch/roll (type B)
+            if msg_type == 'YXXDR':
+                fields = raw_line.split('*')[0].split(',')
+                names = set()
+                i = 1
+                while i + 3 < len(fields):
+                    name = fields[i + 3]
+                    if name:
+                        names.add(name)
+                    i += 4
+                if 'PTCH' in names or 'ROLL' in names:
+                    return 'XDRB'
+                return None
+
+            # Most sentences map by the 3-letter sentence code (talker prefix ignored)
+            code = msg_type[-3:] if len(msg_type) >= 3 else None
+            if code and code in self.SUPPORTED_SENTENCES:
+                return code
+            return None
+        except Exception:
+            return None
+
     def _read_serial_loop(self):
         """Background thread function for reading serial data. Processes messages as fast as
         they arrive; only sleeps when read returns no data to avoid busy-loop on USB quirks."""
@@ -282,6 +330,10 @@ class NMEAHandler:
                         m = re.match(r'^[A-Z]+', raw_type) if raw_type else None
                         msg_type = m.group(0) if m else (raw_type or '')
                         self.nmea_messages.add(msg_type)
+                        # Track sentence last-seen for UI auto-sync
+                        sentence_id = self._map_msg_to_sentence_id(data, msg_type)
+                        if sentence_id:
+                            self.sentence_last_seen[sentence_id] = time.time()
                         # New message types are selected for streaming by default
                         if msg_type not in self.selected_message_types:
                             self.selected_message_types.add(msg_type)
@@ -960,6 +1012,10 @@ class NMEAHandler:
                 self.serial_connection.write(cmd.encode())
                 time.sleep(0.2)
             
+            if 'sentence_config' not in self.state:
+                self.state['sentence_config'] = {}
+            self.state['sentence_config'][sentence_id] = {'enabled': enabled, 'interval': interval}
+            self.save_state()
             action = "Enabled" if enabled else "Disabled"
             return True, f"{action} {sentence_id}"
             
@@ -991,10 +1047,15 @@ class NMEAHandler:
                     cmd = f'$PAMTC,EN,{sentence_id},{enable_flag},{interval}\r\n'
                     try:
                         self.serial_connection.write(cmd.encode())
+                        if 'sentence_config' not in self.state:
+                            self.state['sentence_config'] = {}
+                        self.state['sentence_config'][sentence_id] = {'enabled': enabled, 'interval': interval}
                         applied += 1
                         time.sleep(0.15)
                     except Exception as e:
                         errors.append(f"{sentence_id}: {e}")
+            if applied > 0:
+                self.save_state()
             if errors:
                 self.app_logger.warning(f"Batch configure had errors: {errors}")
                 return False, f"Applied {applied}/{len(changes)} changes; errors: " + "; ".join(errors[:3])
@@ -1195,6 +1256,15 @@ class NMEAHandler:
                     if not success:
                         self.app_logger.warning(f"Failed to enable sentences: {msg}")
                         # Continue anyway - sentences may already be enabled
+                    # Apply saved sentence config so device matches last UI state after restart
+                    saved = self.state.get('sentence_config') or {}
+                    if saved:
+                        changes = [{'sentence_id': sid, 'enabled': c['enabled'], 'interval': c.get('interval')}
+                                  for sid, c in saved.items() if sid in self.SUPPORTED_SENTENCES]
+                        if changes:
+                            apply_ok, _ = self.configure_sentences_batch(changes)
+                            if apply_ok:
+                                self.app_logger.info("Restored saved sentence configuration to device")
                     
                     # Start the reader thread
                     self.start_reader_thread()
@@ -1202,6 +1272,7 @@ class NMEAHandler:
                     # Update state
                     self.state['baud_rate'] = 38400
                     self.save_state()
+                    self.connected_since = time.time()
                     
                     self.connection_status = self.CONN_STATUS_CONNECTED
                     detected_msg = f" (detected at {self.detected_baud})" if self.detected_baud == 38400 else " (switched from 4800)"
@@ -1249,6 +1320,8 @@ class NMEAHandler:
             self.state['port'] = None
             self.message_history = []  # Clear message history
             self.nmea_messages = set()  # Clear detected message types
+            self.sentence_last_seen = {}
+            self.connected_since = None
             self.messages_received = 0
             self.detected_baud = None
             self.connection_status = self.CONN_STATUS_DISCONNECTED
@@ -1289,7 +1362,10 @@ class NMEAHandler:
         return {
             "status": "success",
             "messages": filtered_messages,
-            "available_types": list(self.nmea_messages)
+            "available_types": list(self.nmea_messages),
+            "now": time.time(),
+            "connected_since": self.connected_since,
+            "observed_sentence_last_seen": self.sentence_last_seen
         }
 
     def log_message(self, message):
@@ -1471,10 +1547,11 @@ def get_sensor_history():
 
 @app.route('/api/sentences', methods=['GET'])
 def get_sentences():
-    """Get list of all supported NMEA sentences with their info"""
+    """Get list of all supported NMEA sentences with their info and saved config (persisted across restarts)."""
     return jsonify({
         "sentences": nmea_handler.get_sentences_info(),
-        "connected": nmea_handler.serial_connection is not None and nmea_handler.serial_connection.is_open
+        "connected": nmea_handler.serial_connection is not None and nmea_handler.serial_connection.is_open,
+        "saved_config": nmea_handler.state.get('sentence_config') or {}
     })
 
 @app.route('/api/sentences/configure', methods=['POST'])

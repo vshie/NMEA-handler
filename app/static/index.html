@@ -1014,7 +1014,9 @@
                   <v-alert v-if="!connectionInfo.connected" type="info" dense class="mb-4">
                     Connect to a WX200 device to configure sentence output.
                   </v-alert>
-                  
+                  <div class="text-caption grey--text mb-2">
+                    Switches set which sentences the device outputs (and at what interval). Settings are saved and restored when the extension restarts; they are not based on which messages are currently being received.
+                  </div>
                   <v-alert v-if="sentenceConfigMessage" :type="sentenceConfigSuccess ? 'success' : 'error'" dense dismissible class="mb-4" @input="sentenceConfigMessage = ''">
                     {{ sentenceConfigMessage }}
                   </v-alert>
@@ -2028,6 +2030,16 @@
                   this.updateMessageTypes();
                 }
               }
+              // Auto-sync sentence switches with observed reception:
+              // - if we receive a sentence while switch is off => turn it on
+              // - if switch is on but no message for > 3x interval => turn it off
+              if (this.connectionInfo.connected && response.data.observed_sentence_last_seen && this.sentences.length > 0) {
+                this.reconcileSentenceSwitches(
+                  response.data.observed_sentence_last_seen,
+                  response.data.now,
+                  response.data.connected_since
+                );
+              }
             }
           } catch (error) {
             console.error('Error reading serial:', error);
@@ -2104,13 +2116,18 @@
           try {
             const response = await axios.get('/api/sentences');
             this.sentences = response.data.sentences;
-            
-            // Initialize sentenceConfig and sentenceIntervals with default values
+            const saved = response.data.saved_config || {};
+            // Use saved config (persisted across restarts) when present, else defaults
             this.sentences.forEach(sentence => {
-              if (!(sentence.id in this.sentenceConfig)) {
+              const s = saved[sentence.id];
+              if (s && typeof s.enabled === 'boolean') {
+                this.$set(this.sentenceConfig, sentence.id, s.enabled);
+              } else if (!(sentence.id in this.sentenceConfig)) {
                 this.sentenceConfig[sentence.id] = sentence.default_enabled;
               }
-              if (!(sentence.id in this.sentenceIntervals)) {
+              if (s && typeof s.interval === 'number') {
+                this.$set(this.sentenceIntervals, sentence.id, s.interval / 10);
+              } else if (!(sentence.id in this.sentenceIntervals)) {
                 this.$set(this.sentenceIntervals, sentence.id, sentence.default_interval / 10);
               }
             });
@@ -2160,6 +2177,26 @@
             clearTimeout(this.sentenceFlushTimer);
           }
           this.sentenceFlushTimer = setTimeout(() => this.flushSentenceChanges(), 3000);
+        },
+        reconcileSentenceSwitches(lastSeenMap, nowSec, connectedSinceSec) {
+          const now = typeof nowSec === 'number' ? nowSec : (Date.now() / 1000);
+          const connectedSince = typeof connectedSinceSec === 'number' ? connectedSinceSec : null;
+          this.sentences.forEach(sentence => {
+            const id = sentence.id;
+            const interval = this.getSentenceInterval(sentence); // seconds
+            const threshold = 3 * interval;
+            const lastSeen = lastSeenMap[id];
+            const receiving = (typeof lastSeen === 'number') && ((now - lastSeen) <= threshold);
+            const pastGrace = connectedSince !== null && ((now - connectedSince) > threshold);
+            const desired = !!this.sentenceConfig[id];
+            if (receiving && !desired) {
+              this.$set(this.sentenceConfig, id, true);
+              this.queueSentenceChange(id, true, interval);
+            } else if (!receiving && desired && pastGrace) {
+              this.$set(this.sentenceConfig, id, false);
+              this.queueSentenceChange(id, false, interval);
+            }
+          });
         },
         async flushSentenceChanges() {
           if (this.sentenceFlushInProgress) return;
