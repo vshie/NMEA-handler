@@ -266,13 +266,16 @@ class NMEAHandler:
                 yield '$' + part
 
     def _read_serial_loop(self):
-        """Background thread function for reading serial data"""
+        """Background thread function for reading serial data. Processes messages as fast as
+        they arrive; only sleeps when read returns no data to avoid busy-loop on USB quirks."""
         while not self.should_stop:
             if self.serial_connection and self.serial_connection.is_open:
+                got_data = False
                 try:
                     with self._serial_lock:
                         raw = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
                     for data in self._split_nmea_sentences(raw):
+                        got_data = True
                         self.messages_received += 1
                         # Parse NMEA message type (letters only; avoids HCHDG31.0 from truncated lines)
                         raw_type = data.split(',')[0].lstrip('$').strip()
@@ -311,9 +314,14 @@ class NMEAHandler:
                         if now - self._last_serial_read_error_log >= 30:
                             self._last_serial_read_error_log = now
                             self.app_logger.warning(f"Serial read: {err_str} (further occurrences throttled)")
+                        time.sleep(0.02)  # Brief sleep only on spurious read so we don't tight-loop
                     else:
                         self.app_logger.error(f"Error in serial reader thread: {e}")
-            time.sleep(0.1)  # Small delay to prevent CPU overuse
+                if not got_data and not self.should_stop:
+                    # No message this iteration (timeout or empty line); short sleep to avoid busy-wait
+                    time.sleep(0.01)
+            else:
+                time.sleep(0.2)  # Not connected; sleep before rechecking
 
     def _parse_nmea_for_dashboard(self, raw_data, msg_type):
         """
