@@ -279,6 +279,11 @@ class NMEAHandler:
                         m = re.match(r'^[A-Z]+', raw_type) if raw_type else None
                         msg_type = m.group(0) if m else (raw_type or '')
                         self.nmea_messages.add(msg_type)
+                        # New message types are selected for streaming by default
+                        if msg_type not in self.selected_message_types:
+                            self.selected_message_types.add(msg_type)
+                            self.state['selected_message_types'] = list(self.selected_message_types)
+                            self.save_state()
                         
                         # Update aggregated sensor data
                         self._parse_nmea_for_dashboard(data, msg_type)
@@ -979,8 +984,17 @@ class NMEAHandler:
                 timeout = 5  # 5 second timeout
                 
                 while time.time() - start_time < timeout:
-                    line = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
-                    
+                    try:
+                        line = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
+                    except Exception as read_err:
+                        # USB serial often raises "returned no data" spuriously; retry
+                        if "returned no data" in str(read_err) or "multiple access" in str(read_err):
+                            time.sleep(0.05)
+                            continue
+                        raise
+                    if not line:
+                        time.sleep(0.05)
+                        continue
                     if line.startswith('$PAMTR,EN,'):
                         # Parse: $PAMTR,EN,<total>,<num>,<id>,<enabled>,<interval> or $PAMTR,EN,<id>,<enabled>,<interval>
                         parts = line.split(',')

@@ -384,7 +384,7 @@
                             </div>
                           </div>
                         </div>
-                        <div class="text-caption grey--text mt-1 text-center" style="font-size:9px">← ETH</div>
+                        <div class="text-caption grey--text mt-1 text-center" style="font-size:9px">ETH →</div>
                       </div>
                       <!-- Device List -->
                       <v-simple-table dense class="device-id-table flex-grow-1">
@@ -400,7 +400,8 @@
                             <tr v-for="(item, index) in deviceIds" :key="index"
                                 @mouseenter="hoveredUsbPosition = item.usb_port ? item.usb_port.position : null"
                                 @mouseleave="hoveredUsbPosition = null"
-                                class="device-row">
+                                @click="selectDeviceFromList(item)"
+                                class="device-row clickable">
                               <td class="py-1"><code>{{ item.device }}</code></td>
                               <td class="py-1">{{ item.display_name }}</td>
                               <td class="py-1 text-caption grey--text">
@@ -1801,9 +1802,20 @@
             console.log('Device IDs response:', response.data);
             this.deviceIds = response.data.devices || [];
             console.log('deviceIds set to:', this.deviceIds);
+            // Keep drop-down options in sync: include any device path from by-id so the port selector works
+            if (this.deviceIds.length > 0) {
+              const fromDevices = this.deviceIds.map(d => d.device);
+              this.availablePorts = [...new Set([...(this.availablePorts || []), ...fromDevices])].sort();
+            }
           } catch (error) {
             console.error('Error fetching device IDs:', error);
             this.deviceIds = [];
+          }
+        },
+        selectDeviceFromList(item) {
+          this.selectedPort = item.device;
+          if (!this.availablePorts.includes(item.device)) {
+            this.availablePorts = [...this.availablePorts, item.device].sort();
           }
         },
         async fetchConnectionStatus() {
@@ -1978,9 +1990,14 @@
               }
               if (response.data.available_types) {
                 this.availableMessageTypes = response.data.available_types;
-                // Only update selected types if none are selected
+                // Select all available types by default (including any newly appeared)
+                const needUpdate = response.data.available_types.some(t => !this.selectedMessageTypes.includes(t));
                 if (this.selectedMessageTypes.length === 0) {
                   this.selectedMessageTypes = [...response.data.available_types];
+                  this.updateMessageTypes();
+                } else if (needUpdate) {
+                  const combined = [...new Set([...this.selectedMessageTypes, ...response.data.available_types])];
+                  this.selectedMessageTypes = combined;
                   this.updateMessageTypes();
                 }
               }
