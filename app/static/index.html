@@ -2329,24 +2329,23 @@
           }
           this.sentenceFlushTimer = setTimeout(() => this.flushSentenceChanges(), 3000);
         },
+        // Update switch display from observed reception only; do NOT send commands.
+        // Only user toggles (toggleSentence) or interval change (setSentenceInterval) send commands.
         reconcileSentenceSwitches(lastSeenMap, nowSec, connectedSinceSec) {
           const now = typeof nowSec === 'number' ? nowSec : (Date.now() / 1000);
           const connectedSince = typeof connectedSinceSec === 'number' ? connectedSinceSec : null;
           this.sentences.forEach(sentence => {
             const id = sentence.id;
             const interval = this.getSentenceInterval(sentence); // seconds
-            // Use a minimum threshold since this UI only reconciles once per second.
             const threshold = Math.max(3 * interval, 3);
             const lastSeen = lastSeenMap[id];
             const receiving = (typeof lastSeen === 'number') && ((now - lastSeen) <= threshold);
             const pastGrace = connectedSince !== null && ((now - connectedSince) > threshold);
-            const desired = !!this.sentenceConfig[id];
-            if (receiving && !desired) {
+            const currentlyOn = !!this.sentenceConfig[id];
+            if (receiving && !currentlyOn) {
               this.$set(this.sentenceConfig, id, true);
-              this.queueSentenceChange(id, true, interval);
-            } else if (!receiving && desired && pastGrace) {
+            } else if (!receiving && currentlyOn && pastGrace) {
               this.$set(this.sentenceConfig, id, false);
-              this.queueSentenceChange(id, false, interval);
             }
           });
         },
