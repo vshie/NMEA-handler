@@ -53,7 +53,7 @@ class NMEAHandler:
     
     # Sentences auto-enabled on connection for dashboard display
     # These are enabled in addition to device defaults
-    REQUIRED_SENTENCES = ['MWVT', 'MWD', 'HDT', 'ROT', 'ZDA']
+    REQUIRED_SENTENCES = ['MWVR', 'MWVT', 'MWD', 'HDT', 'ROT', 'ZDA']
     
     # Connection status phases
     CONN_STATUS_DISCONNECTED = 'disconnected'
@@ -499,8 +499,10 @@ class NMEAHandler:
                         # Push derived aggregates/status (throttled)
                         self._emit_sensor_if_due()
                         self._emit_status_if_due()
-                        # Stream the message if streaming is active and type is selected
-                        if self.is_streaming and msg_type in self.selected_message_types:
+                        # Stream the message if streaming is active and type is selected.
+                        # WIMWV is always streamed at 38400 baud (autopilot needs MWV for wind vane).
+                        always_stream = msg_type == 'WIMWV' and self.state.get('baud_rate') == 38400
+                        if self.is_streaming and (msg_type in self.selected_message_types or always_stream):
                             self.stream_message(data, msg_type)
                 except Exception as e:
                     err_str = str(e)
