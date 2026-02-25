@@ -66,8 +66,6 @@ The extension streams live wind data to Cockpit's data-lake via WebSocket. This 
 |---|---|---|
 | `wind-direction-true` | `$WIMWD` | True wind direction relative to north (degrees) |
 | `wind-speed-kts` | `$WIMWD` | True wind speed (knots) |
-| `wind-apparent-speed-kts` | `$WIMWV` (R) | Apparent wind speed (knots) |
-| `wind-apparent-angle` | `$WIMWV` (R) | Apparent wind angle relative to vessel (degrees) |
 
 ### Setting Up Cockpit Connection
 

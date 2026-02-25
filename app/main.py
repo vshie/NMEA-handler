@@ -48,15 +48,6 @@ class NMEAHandler:
         'VTG':   {'name': 'Course Over Ground', 'description': 'Course and speed over ground', 'default_enabled': False, 'default_interval': 10, 'max_chars': 42},
         'VWR':   {'name': 'Relative Wind (Alt)', 'description': 'Relative wind speed and angle (alternative format)', 'default_enabled': False, 'default_interval': 10, 'max_chars': 47},
         'VWT':   {'name': 'True Wind (Alt)', 'description': 'True wind speed and angle (alternative format)', 'default_enabled': True, 'default_interval': 10, 'max_chars': 47},
-        'XDRA': {'name': 'Transducer A', 'description': 'Wind chill, heat index, station pressure', 'default_enabled': True, 'default_interval': 10, 'max_chars': 70},
-        'XDRB': {'name': 'Transducer B', 'description': 'Pitch and roll angles', 'default_enabled': True, 'default_interval': 10, 'max_chars': 42},
-        'XDRC': {'name': 'Transducer C', 'description': 'X, Y, Z accelerometer readings', 'default_enabled': False, 'default_interval': 10, 'max_chars': 60},
-        'XDRD': {'name': 'Transducer D', 'description': 'Compensated rate gyros (roll, pitch, yaw)', 'default_enabled': True, 'default_interval': 10, 'max_chars': 60},
-        'XDRE': {'name': 'Transducer E', 'description': 'Raw rate gyros (roll, pitch, yaw)', 'default_enabled': False, 'default_interval': 10, 'max_chars': 60},
-        'XDRH': {'name': 'Transducer H', 'description': 'Heater temperatures and voltages', 'default_enabled': False, 'default_interval': 10, 'max_chars': 70},
-        'XDRR': {'name': 'Transducer R', 'description': 'Rain accumulation, duration, rate', 'default_enabled': False, 'default_interval': 10, 'max_chars': 70},
-        'XDRT': {'name': 'Transducer T', 'description': 'Internal temperatures and voltages', 'default_enabled': False, 'default_interval': 10, 'max_chars': 70},
-        'XDRW': {'name': 'Transducer W', 'description': 'Raw/unfiltered wind measurements', 'default_enabled': False, 'default_interval': 10, 'max_chars': 42},
         'ZDA':   {'name': 'Time & Date', 'description': 'UTC time and date', 'default_enabled': False, 'default_interval': 10, 'max_chars': 38},
     }
     
@@ -336,20 +327,6 @@ class NMEAHandler:
                 # Default to apparent/relative
                 return 'MWVR'
 
-            # YXXDR is the XDR sentence; for our dashboard we use pitch/roll (type B)
-            if msg_type == 'YXXDR':
-                fields = raw_line.split('*')[0].split(',')
-                names = set()
-                i = 1
-                while i + 3 < len(fields):
-                    name = fields[i + 3]
-                    if name:
-                        names.add(name)
-                    i += 4
-                if 'PTCH' in names or 'ROLL' in names:
-                    return 'XDRB'
-                return None
-
             # Most sentences map by the 3-letter sentence code (talker prefix ignored)
             code = msg_type[-3:] if len(msg_type) >= 3 else None
             if code and code in self.SUPPORTED_SENTENCES:
@@ -585,10 +562,6 @@ class NMEAHandler:
                         self.sensor_data['wind_apparent']['timestamp'] = timestamp
                         self._record_history('wind_apparent_speed', speed)
                         self._record_history('wind_apparent_angle', angle)
-                        if speed is not None:
-                            self.ws_broadcast('wind-apparent-speed-kts', round(speed, 1))
-                        if angle is not None:
-                            self.ws_broadcast('wind-apparent-angle', round(angle, 1))
                     elif reference == 'T':
                         self.sensor_data['wind_true']['angle'] = angle
                         self.sensor_data['wind_true']['speed_kts'] = speed
@@ -1243,7 +1216,7 @@ class NMEAHandler:
         Configure a single NMEA sentence on the device.
         
         Args:
-            sentence_id: The sentence identifier (e.g., 'MWD', 'XDRA')
+            sentence_id: The sentence identifier (e.g., 'MWD', 'MWVR')
             enabled: True to enable, False to disable
             interval: Transmission interval in tenths of seconds (default: 10 = 1 second)
         
