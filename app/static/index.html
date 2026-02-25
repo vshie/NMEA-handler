@@ -1027,7 +1027,7 @@
                           <span class="message-description ml-2">{{ card.description }}</span>
                         </div>
                         <div style="display:flex;align-items:center;gap:8px">
-                          <span class="rate-badge">{{ card.hz >= 0.1 ? card.hz.toFixed(1) + ' Hz' : '...' }}</span>
+                          <span class="rate-badge" v-if="card.hz > 0">{{ card.hz.toFixed(1) }} Hz</span>
                           <span class="text-caption grey--text">{{ formatTime(card.timestamp) }}</span>
                         </div>
                       </div>
@@ -1301,7 +1301,6 @@
       data: {
         messages: [],
         latestByType: {},
-        _latestByTypeVer: 0,
         availablePorts: [],
         deviceIds: [],
         hoveredUsbPosition: null,
@@ -1426,7 +1425,6 @@
           });
         },
         latestMessageCards() {
-          void this._latestByTypeVer;
           return Object.values(this.latestByType)
             .map(entry => {
               const parsed = this.parseNMEA(entry.raw, entry.type);
@@ -1529,23 +1527,32 @@
       },
       methods: {
         _seedLatestByType(messages) {
-          const byType = {};
-          for (let i = messages.length - 1; i >= 0; i--) {
-            const m = messages[i];
-            if (m.type) byType[m.type] = m;
-          }
+          const grouped = {};
+          messages.forEach(m => {
+            if (!m.type) return;
+            if (!grouped[m.type]) grouped[m.type] = { latest: m, timestamps: [] };
+            grouped[m.type].latest = m;
+            if (m.timestamp) {
+              const ts = new Date(m.timestamp).getTime() / 1000;
+              if (!isNaN(ts)) grouped[m.type].timestamps.push(ts);
+            }
+          });
           const now = Date.now() / 1000;
-          Object.keys(byType).forEach(t => {
-            if (this.latestByType[t]) return;
+          const cutoff = now - 5;
+          Object.keys(grouped).forEach(t => {
+            const g = grouped[t];
+            const recent = g.timestamps.filter(ts => ts > cutoff).sort();
+            const hz = recent.length >= 2
+              ? (recent.length - 1) / (recent[recent.length - 1] - recent[0])
+              : 0;
             this.$set(this.latestByType, t, {
-              raw: byType[t].raw,
+              raw: g.latest.raw,
               type: t,
-              timestamp: byType[t].timestamp,
-              hz: 0,
-              _timestamps: [now]
+              timestamp: g.latest.timestamp,
+              hz: isFinite(hz) ? hz : 0,
+              _timestamps: recent.length > 0 ? recent : [now]
             });
           });
-          this._latestByTypeVer++;
         },
         startSse() {
           if (this._eventSource) return;
@@ -1587,9 +1594,10 @@
               const timestamps = prev ? prev._timestamps.concat(now) : [now];
               const cutoff = now - 5;
               const recent = timestamps.filter(ts => ts > cutoff);
-              const hz = recent.length >= 2
+              const rawHz = recent.length >= 2
                 ? (recent.length - 1) / (recent[recent.length - 1] - recent[0])
                 : 0;
+              const hz = isFinite(rawHz) ? rawHz : 0;
               this.$set(this.latestByType, t, {
                 raw: msg.raw,
                 type: t,
@@ -1597,7 +1605,6 @@
                 hz: hz,
                 _timestamps: recent
               });
-              this._latestByTypeVer++;
             } catch (e) {}
           });
           es.addEventListener('sensor_data', (ev) => {
@@ -2268,7 +2275,6 @@
               this.stopPolling();
               this.messages = [];
               this.latestByType = {};
-              this._latestByTypeVer = 0;
               this.availableMessageTypes = [];
               this.selectedMessageTypes = [];
               this.isStreaming = false;
