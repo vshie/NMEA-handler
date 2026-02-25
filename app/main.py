@@ -246,7 +246,13 @@ class NMEAHandler:
                 self.state.update(loaded)
                 if 'sentence_config' not in self.state or not isinstance(self.state['sentence_config'], dict):
                     self.state['sentence_config'] = {}
-                self.selected_message_types = set(self.state.get('selected_message_types', []))
+                raw_types = self.state.get('selected_message_types', [])
+                self.selected_message_types = {
+                    t for t in raw_types
+                    if isinstance(t, str) and len(t) >= 5 and t.isalpha() and t.isupper()
+                }
+                if len(self.selected_message_types) < len(raw_types):
+                    self.state['selected_message_types'] = list(self.selected_message_types)
                 self.is_streaming = self.state.get('is_streaming', False)
                 self.app_logger.info(f"Loaded saved state: port={self.state['port']}, baud_rate={self.state['baud_rate']}, streaming={self.is_streaming}")
         except Exception as e:
@@ -471,12 +477,11 @@ class NMEAHandler:
                             with self._serial_health_lock:
                                 self.serial_health['unmapped_messages'] += 1
                                 self.serial_health['last_unmapped_type'] = msg_type
-                        # New message types are selected for streaming by default
-                        if msg_type not in self.selected_message_types:
+                        # Auto-select recognized message types for streaming
+                        if sentence_id and msg_type not in self.selected_message_types:
                             self.selected_message_types.add(msg_type)
                             self.state['selected_message_types'] = list(self.selected_message_types)
                             self.save_state()
-                            # Let UI know selection changed
                             self._sse_broadcast('selected_message_types', list(self.selected_message_types))
                         
                         # Update aggregated sensor data
