@@ -1526,6 +1526,23 @@
         }
       },
       methods: {
+        _seedLatestByType(messages) {
+          const byType = {};
+          for (let i = messages.length - 1; i >= 0; i--) {
+            const m = messages[i];
+            if (m.type) byType[m.type] = m;
+          }
+          const now = Date.now() / 1000;
+          Object.keys(byType).forEach(t => {
+            this.$set(this.latestByType, t, {
+              raw: byType[t].raw,
+              type: t,
+              timestamp: byType[t].timestamp,
+              hz: 0,
+              _timestamps: [now]
+            });
+          });
+        },
         startSse() {
           if (this._eventSource) return;
           const es = new EventSource('/api/events');
@@ -1545,7 +1562,10 @@
               if (data.stream_status) this.applyStreamStatus(data.stream_status);
               if (data.sensor_data) this.sensorData = data.sensor_data;
               if (data.available_types) this.availableMessageTypes = data.available_types;
-              if (data.messages) this.messages = data.messages;
+              if (data.messages) {
+                this.messages = data.messages;
+                this._seedLatestByType(data.messages);
+              }
             } catch (e) {
               console.error('Error parsing init SSE:', e);
             }
@@ -2242,6 +2262,7 @@
             if (response.data.success) {
               this.stopPolling();
               this.messages = [];
+              this.latestByType = {};
               this.availableMessageTypes = [];
               this.selectedMessageTypes = [];
               this.isStreaming = false;
@@ -2298,6 +2319,7 @@
             if (response.data.status === 'success') {
               if (response.data.messages) {
                 this.messages = response.data.messages;
+                this._seedLatestByType(response.data.messages);
               }
               if (response.data.available_types) {
                 this.availableMessageTypes = response.data.available_types;
