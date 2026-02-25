@@ -229,8 +229,8 @@ class NMEAHandler:
         
         # Restore previous connection if it exists
         if self.state['port']:
-            self.app_logger.info(f"Restoring previous connection to {self.state['port']} (device defaults to 4800 baud on power cycle)")
-            success, message = self.connect_serial(self.state['port'])
+            self.app_logger.info(f"Restoring previous connection to {self.state['port']} at {self.state['baud_rate']} baud")
+            success, message = self.connect_serial(self.state['port'], self.state['baud_rate'])
             if success:
                 self.app_logger.info("Successfully restored previous connection")
                 # Streaming is always started in connect_serial on success
@@ -1404,15 +1404,14 @@ class NMEAHandler:
         
         Args:
             port: Serial port path
-            baud_rate: Ignored for ordering — kept for API compat
+            baud_rate: Hint for which baud to try first (saved state); does NOT control stay_at_4800
             stay_at_4800: If True, never switch to 38400 (only set from explicit user checkbox)
         
         Connection sequence (unless stay_at_4800):
-        1. Try 4800 baud first (device always boots at 4800 after power cycle)
-        2. If 4800 fails, try 38400 baud (device may still be running from a prior session)
+        1. Try 4800 baud - if successful, switch to 38400 per manual sequence
+        2. If 4800 fails, try 38400 baud (device may already be configured)
         3. Toggle between baud rates until successful or max retries
-        4. Once connected at 4800, switch to 38400 per manual sequence
-        5. Enable required sentences
+        4. Once at target baud, enable required sentences
         """
         try:
             # Clean up any existing connection
@@ -1431,8 +1430,9 @@ class NMEAHandler:
             max_attempts = 6  # 3 attempts at each baud rate
             if stay_at_4800:
                 baud_rates = [4800]
+            elif baud_rate == 38400:
+                baud_rates = [38400, 4800]
             else:
-                # Always try 4800 first: device resets to 4800 on every power cycle
                 baud_rates = [4800, 38400]
             
             # Try to establish connection
