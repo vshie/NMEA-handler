@@ -17,6 +17,8 @@ import queue
 
 try:
     import websockets
+    from websockets.datastructures import Headers as WsHeaders
+    from websockets.http11 import Response as WsResponse
     HAS_WEBSOCKETS = True
 except ImportError:
     HAS_WEBSOCKETS = False
@@ -871,6 +873,11 @@ class NMEAHandler:
 
     # ── Cockpit data-lake WebSocket ──────────────────────────────────
 
+    def _ws_process_request(self, connection, req):
+        """Return HTTP 200 for non-WebSocket probes (BlueOS service scanner)."""
+        if "Upgrade" not in req.headers:
+            return WsResponse(200, "OK", WsHeaders(), b"Airmar 300WX WebSocket endpoint\n")
+
     def _start_ws_server(self):
         """Start the Cockpit data-lake WebSocket server on a background thread."""
         def _run():
@@ -881,37 +888,44 @@ class NMEAHandler:
 
         t = threading.Thread(target=_run, daemon=True, name='cockpit-ws')
         t.start()
-        self.app_logger.info("Cockpit data-lake WebSocket server starting on port 8765")
+        self.app_logger.info("Cockpit data-lake WebSocket server started on ws://0.0.0.0:8765")
 
     async def _ws_serve(self):
-        async with websockets.serve(self._ws_handler, '0.0.0.0', 8765):
+        async with websockets.serve(
+            self._ws_handler, '0.0.0.0', 8765,
+            process_request=self._ws_process_request,
+        ):
             await asyncio.Future()
 
     async def _ws_handler(self, ws):
         self._ws_clients.add(ws)
-        self.app_logger.info(f"Cockpit WebSocket client connected ({len(self._ws_clients)} total)")
+        self.app_logger.info(f"Cockpit WS client connected: {ws.remote_address} ({len(self._ws_clients)} total)")
         try:
-            await ws.send("cockpit-ws-status=connected")
+            await ws.send("wx300-connection-status=connected")
             async for _ in ws:
                 pass
-        except websockets.ConnectionClosed:
+        except websockets.exceptions.ConnectionClosed:
             pass
         finally:
             self._ws_clients.discard(ws)
-            self.app_logger.info(f"Cockpit WebSocket client disconnected ({len(self._ws_clients)} total)")
+            self.app_logger.info(f"Cockpit WS client disconnected ({len(self._ws_clients)} total)")
 
     def ws_broadcast(self, variable, value):
         """Send a variable=value pair to all connected Cockpit clients."""
         if not self._ws_clients or self._ws_loop is None:
             return
         msg = f"{variable}={value}"
-        dead = set()
-        for ws in list(self._ws_clients):
-            try:
-                asyncio.run_coroutine_threadsafe(ws.send(msg), self._ws_loop)
-            except Exception:
-                dead.add(ws)
-        self._ws_clients -= dead
+
+        async def _send():
+            dead = set()
+            for client in self._ws_clients.copy():
+                try:
+                    await client.send(msg)
+                except Exception:
+                    dead.add(client)
+            self._ws_clients.difference_update(dead)
+
+        asyncio.run_coroutine_threadsafe(_send(), self._ws_loop)
 
     # ── Serial port discovery ─────────────────────────────────────
 
