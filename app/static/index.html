@@ -2416,27 +2416,23 @@
           this.sentenceFlushTimer = setTimeout(() => this.flushSentenceChanges(), 3000);
         },
         // Update switch display from observed reception only; do NOT send commands.
-        // Only user toggles (toggleSentence) or interval change (setSentenceInterval) send commands.
+        // Skip sentences with pending user changes so the switch doesn't fight the user.
         reconcileSentenceSwitches(lastSeenMap, nowSec, connectedSinceSec) {
           const now = typeof nowSec === 'number' ? nowSec : (Date.now() / 1000);
           const connectedSince = typeof connectedSinceSec === 'number' ? connectedSinceSec : null;
+          const pending = this.pendingSentenceChanges || {};
           this.sentences.forEach(sentence => {
             const id = sentence.id;
-            const interval = this.getSentenceInterval(sentence); // seconds
+            if (id in pending) return;
+            const interval = this.getSentenceInterval(sentence);
             const threshold = Math.max(3 * interval, 3);
             const lastSeen = lastSeenMap[id];
             const receiving = (typeof lastSeen === 'number') && ((now - lastSeen) <= threshold);
             const pastGrace = connectedSince !== null && ((now - connectedSince) > threshold);
             const currentlyOn = !!this.sentenceConfig[id];
             if (receiving && !currentlyOn) {
-              // #region agent log
-              fetch('http://127.0.0.1:7242/ingest/7050f155-ae55-42cf-9654-50c506ff56ff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.html:reconcileSentenceSwitches',message:'reconcile set ON',data:{id,receiving,currentlyOn,lastSeen},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
-              // #endregion
               this.$set(this.sentenceConfig, id, true);
             } else if (!receiving && currentlyOn && pastGrace) {
-              // #region agent log
-              fetch('http://127.0.0.1:7242/ingest/7050f155-ae55-42cf-9654-50c506ff56ff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.html:reconcileSentenceSwitches',message:'reconcile set OFF',data:{id,receiving,currentlyOn,pastGrace},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
-              // #endregion
               this.$set(this.sentenceConfig, id, false);
             }
           });
