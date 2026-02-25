@@ -71,7 +71,6 @@ class NMEAHandler:
         self.app_logger = logging.getLogger('app')
         
         self.nmea_messages = set()
-        self.selected_message_types = set()
         self.log_path = None
         self.state_path = None
         self.udp_socket = None
@@ -116,7 +115,6 @@ class NMEAHandler:
             'port': None,
             'baud_rate': 4800,
             'is_streaming': False,
-            'selected_message_types': [],
             'sentence_config': {}  # { sentence_id: { "enabled": bool, "interval": int (tenths) } }
         }
         # Lock so only one consumer reads from serial (reader thread vs sentence query)
@@ -252,13 +250,6 @@ class NMEAHandler:
                 self.state.update(loaded)
                 if 'sentence_config' not in self.state or not isinstance(self.state['sentence_config'], dict):
                     self.state['sentence_config'] = {}
-                raw_types = self.state.get('selected_message_types', [])
-                self.selected_message_types = {
-                    t for t in raw_types
-                    if isinstance(t, str) and len(t) >= 5 and t.isalpha() and t.isupper()
-                }
-                if len(self.selected_message_types) < len(raw_types):
-                    self.state['selected_message_types'] = list(self.selected_message_types)
                 self.is_streaming = self.state.get('is_streaming', False)
                 self.app_logger.info(f"Loaded saved state: port={self.state['port']}, baud_rate={self.state['baud_rate']}, streaming={self.is_streaming}")
         except Exception as e:
@@ -267,7 +258,6 @@ class NMEAHandler:
     def save_state(self):
         """Save current state to file"""
         try:
-            self.state['selected_message_types'] = list(self.selected_message_types)
             self.state['is_streaming'] = self.is_streaming
             if 'sentence_config' not in self.state:
                 self.state['sentence_config'] = {}
@@ -412,7 +402,6 @@ class NMEAHandler:
             self._sse_broadcast('stream_status', {
                 'is_streaming': self.is_streaming,
                 'streaming_to': "host.docker.internal:27000" if self.is_streaming else None,
-                'selected_message_types': list(self.selected_message_types),
                 'streamed_messages': self.streamed_messages,
                 'messages_received': self.messages_received,
                 'serial_health': self.get_serial_health(),
@@ -469,13 +458,6 @@ class NMEAHandler:
                             with self._serial_health_lock:
                                 self.serial_health['unmapped_messages'] += 1
                                 self.serial_health['last_unmapped_type'] = msg_type
-                        # Auto-select recognized message types for streaming
-                        if sentence_id and msg_type not in self.selected_message_types:
-                            self.selected_message_types.add(msg_type)
-                            self.state['selected_message_types'] = list(self.selected_message_types)
-                            self.save_state()
-                            self._sse_broadcast('selected_message_types', list(self.selected_message_types))
-                        
                         # Update aggregated sensor data
                         self._parse_nmea_for_dashboard(data, msg_type)
                         
@@ -496,10 +478,8 @@ class NMEAHandler:
                         # Push derived aggregates/status (throttled)
                         self._emit_sensor_if_due()
                         self._emit_status_if_due()
-                        # Stream the message if streaming is active and type is selected.
-                        # WIMWV is always streamed at 38400 baud (autopilot needs MWV for wind vane).
-                        always_stream = msg_type == 'WIMWV' and self.state.get('baud_rate') == 38400
-                        if self.is_streaming and (msg_type in self.selected_message_types or always_stream):
+                        # Stream WIMWV to autopilot via UDP (ArduRover NMEA wind vane).
+                        if self.is_streaming and msg_type == 'WIMWV':
                             self.stream_message(data, msg_type)
                 except Exception as e:
                     err_str = str(e)
@@ -783,10 +763,9 @@ class NMEAHandler:
             self.state['is_streaming'] = True
             self.save_state()
             self.app_logger.info(
-                "UDP streaming started to host.docker.internal:27000 "
-                "(typical device IP: 192.168.2.2)"
+                "UDP streaming WIMWV to host.docker.internal:27000 "
+                "(ArduRover NMEA wind vane)"
             )
-            self.app_logger.info(f"Streaming selected message types: {', '.join(sorted(self.selected_message_types))}")
             return True, "Streaming started"
         except Exception as e:
             self.app_logger.error(f"Error starting UDP stream: {e}")
@@ -807,18 +786,9 @@ class NMEAHandler:
             self.app_logger.error(f"Error stopping UDP stream: {e}")
             return False, str(e)
 
-    def update_selected_message_types(self, message_types):
-        """Update the set of selected message types"""
-        old_types = self.selected_message_types
-        self.selected_message_types = set(message_types)
-        self.save_state()
-        self.app_logger.info(f"Updated streaming message types: {', '.join(sorted(self.selected_message_types))}")
-        if self.is_streaming:
-            self.app_logger.info(f"Streaming active with types: {', '.join(sorted(self.selected_message_types))}")
-
     def stream_message(self, message, msg_type):
-        """Stream message via UDP if type is selected"""
-        if self.is_streaming and msg_type in self.selected_message_types:
+        """Stream WIMWV message via UDP to autopilot"""
+        if self.is_streaming and msg_type == 'WIMWV':
             self.app_logger.info(f"Attempting to stream message type: {msg_type}")
             try:
                 # Check if socket is still valid
@@ -1568,11 +1538,7 @@ class NMEAHandler:
                     self.app_logger.info(self.connection_message)
                     self._sse_broadcast('connection', self.get_connection_info())
                     
-                    # Always start streaming on successful connection so the extension can work without opening the UI
-                    if not self.selected_message_types:
-                        default_types = {'HCHDG', 'CHDG', 'HCHDT', 'WIMWD', 'WIMWV', 'GPGGA', 'GPGA', 'WIMDA'}
-                        self.selected_message_types = default_types
-                        self.save_state()
+                    # Auto-start streaming WIMWV to autopilot on connect
                     self.start_streaming()
                     
                     return True, self.connection_message
@@ -1643,16 +1609,9 @@ class NMEAHandler:
         if not self.serial_connection or not self.serial_connection.is_open:
             return {"status": "error", "message": "Not connected"}
         
-        # Filter messages by selected types
-        filtered_messages = [
-            msg for msg in self.message_history
-            if not self.selected_message_types or msg["type"] in self.selected_message_types
-        ]
-        
         return {
             "status": "success",
-            "messages": filtered_messages,
-            "available_types": list(self.nmea_messages),
+            "messages": self.message_history,
             "now": time.time(),
             "connected_since": self.connected_since,
             "observed_sentence_last_seen": self.sentence_last_seen
@@ -1746,7 +1705,6 @@ def sse_events():
                 'stream_status': {
                     'is_streaming': nmea_handler.is_streaming,
                     'streaming_to': "host.docker.internal:27000" if nmea_handler.is_streaming else None,
-                    'selected_message_types': list(nmea_handler.selected_message_types),
                     'streamed_messages': nmea_handler.streamed_messages,
                     'messages_received': nmea_handler.messages_received,
                     'serial_health': nmea_handler.get_serial_health(),
@@ -1755,7 +1713,6 @@ def sse_events():
                     'connected_since': nmea_handler.connected_since,
                 },
                 'sensor_data': nmea_handler.sensor_data,
-                'available_types': list(nmea_handler.nmea_messages),
                 'messages': nmea_handler.message_history[:50],
             }
             yield _sse_encode('init', init)
@@ -2128,22 +2085,11 @@ def get_streaming_status():
         "is_streaming": nmea_handler.is_streaming,
         "port": nmea_handler.state['port'],
         "baud_rate": nmea_handler.state['baud_rate'],
-        "selected_message_types": list(nmea_handler.selected_message_types),
         "streaming_to": "host.docker.internal:27000" if nmea_handler.is_streaming else None,
         "streamed_messages": nmea_handler.streamed_messages,
         "messages_received": nmea_handler.messages_received,
         "serial_health": nmea_handler.get_serial_health(),
     })
-
-@app.route('/api/message_types/update', methods=['POST'])
-def update_message_types():
-    """Update selected message types"""
-    data = request.get_json()
-    if not data or 'message_types' not in data:
-        return jsonify({"success": False, "message": "No message types specified"})
-    
-    nmea_handler.update_selected_message_types(data['message_types'])
-    return jsonify({"success": True, "message": "Message types updated"})
 
 @app.route('/api/serial/change_baud', methods=['POST'])
 def change_baud():

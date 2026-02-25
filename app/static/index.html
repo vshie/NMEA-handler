@@ -249,16 +249,6 @@
     .usb-port-cell.highlighted .port-type {
       color: white;
     }
-    .message-types {
-      margin-top: 20px;
-      padding: 10px;
-      background-color: #f5f5f5;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-    }
-    .message-type-checkbox {
-      margin: 5px 0;
-    }
     
     /* Sparklines */
     .sparkline-container {
@@ -1271,28 +1261,6 @@
                       No messages received yet. Connect to a serial port to start receiving messages.
                     </div>
                   </div>
-                  
-                  <!-- Message Types for Streaming -->
-                  <div class="text-overline mt-4 mb-2">Message Types to Stream</div>
-                  <div class="message-types">
-                    <v-row>
-                      <v-col cols="12" sm="6" md="4" v-for="(type, index) in availableMessageTypes" :key="index">
-                        <v-checkbox
-                          v-model="selectedMessageTypes"
-                          :label="type"
-                          :value="type"
-                          @change="updateMessageTypes"
-                          class="message-type-checkbox"
-                          dense
-                        ></v-checkbox>
-                      </v-col>
-                      <v-col cols="12" v-if="availableMessageTypes.length === 0">
-                        <div class="text-center pa-4 text-caption">
-                          No message types detected yet.
-                        </div>
-                      </v-col>
-                    </v-row>
-                  </div>
                 </v-card-text>
               </v-tab-item>
 
@@ -1536,13 +1504,10 @@
         hoveredUsbPosition: null,
         selectedPort: null,
         serialPortInfo: { serial_port: 'Not connected', baud_rate: 0 },
-        availableMessageTypes: [],
-        selectedMessageTypes: [],
         pollingInterval: null,
         isStreaming: false,
         streamingStatus: {
           streaming_to: null,
-          selected_message_types: [],
           streamed_messages: 0,
           messages_received: 0,
           serial_health: null,
@@ -1802,7 +1767,6 @@
               if (data.connection) this.connectionInfo = data.connection;
               if (data.stream_status) this.applyStreamStatus(data.stream_status);
               if (data.sensor_data) this.sensorData = data.sensor_data;
-              if (data.available_types) this.availableMessageTypes = data.available_types;
               if (data.messages) {
                 this.messages = data.messages;
                 this._seedLatestByType(data.messages);
@@ -1843,9 +1807,6 @@
           es.addEventListener('stream_status', (ev) => {
             try { this.applyStreamStatus(JSON.parse(ev.data)); } catch (e) {}
           });
-          es.addEventListener('selected_message_types', (ev) => {
-            try { this.selectedMessageTypes = JSON.parse(ev.data); } catch (e) {}
-          });
           es.addEventListener('connection', (ev) => {
             try {
               this.connectionInfo = JSON.parse(ev.data);
@@ -1873,16 +1834,12 @@
           }
           this.streamingStatus = {
             streaming_to: ss.streaming_to,
-            selected_message_types: ss.selected_message_types || [],
             streamed_messages: ss.streamed_messages || 0,
             messages_received: nextCount,
             serial_health: ss.serial_health || null,
             messages_per_second: (mps !== null && isFinite(mps)) ? Math.max(0, mps) : null,
             _last_count_at: now
           };
-          if (ss.selected_message_types && ss.selected_message_types.length > 0) {
-            this.selectedMessageTypes = ss.selected_message_types;
-          }
           // Keep sentence switches in sync using last-seen
           if (this.connectionInfo.connected && ss.observed_sentence_last_seen && this.sentences.length > 0) {
             this.reconcileSentenceSwitches(ss.observed_sentence_last_seen, ss.now, ss.connected_since);
@@ -2488,18 +2445,12 @@
             this.isStreaming = response.data.is_streaming;
             this.applyStreamStatus({
               streaming_to: response.data.streaming_to,
-              selected_message_types: response.data.selected_message_types || [],
               streamed_messages: response.data.streamed_messages || 0,
               messages_received: response.data.messages_received ?? 0,
               serial_health: response.data.serial_health || null
             });
-            // Only restore streaming if it was active
             if (response.data.is_streaming && !this.isStreaming) {
               await this.toggleStreaming();
-            }
-            // Update selected message types if available
-            if (response.data.selected_message_types && response.data.selected_message_types.length > 0) {
-              this.selectedMessageTypes = response.data.selected_message_types;
             }
           } catch (error) {
             console.error('Error checking streaming status:', error);
@@ -2515,8 +2466,6 @@
               this.stopPolling();
               this.messages = [];
               this.latestByType = {};
-              this.availableMessageTypes = [];
-              this.selectedMessageTypes = [];
               this.isStreaming = false;
               this.serialPortInfo = { serial_port: 'Not connected', baud_rate: 0 };
               this.connectionInfo = {
@@ -2572,19 +2521,6 @@
               if (response.data.messages) {
                 this.messages = response.data.messages;
                 this._seedLatestByType(response.data.messages);
-              }
-              if (response.data.available_types) {
-                this.availableMessageTypes = response.data.available_types;
-                // Select all available types by default (including any newly appeared)
-                const needUpdate = response.data.available_types.some(t => !this.selectedMessageTypes.includes(t));
-                if (this.selectedMessageTypes.length === 0) {
-                  this.selectedMessageTypes = [...response.data.available_types];
-                  this.updateMessageTypes();
-                } else if (needUpdate) {
-                  const combined = [...new Set([...this.selectedMessageTypes, ...response.data.available_types])];
-                  this.selectedMessageTypes = combined;
-                  this.updateMessageTypes();
-                }
               }
               // Auto-sync sentence switches with observed reception:
               // - if we receive a sentence while switch is off => turn it on
@@ -2675,14 +2611,6 @@
             this.pollingInterval = null;
           }
         },
-        updateMessageTypes() {
-          axios.post('/api/message_types/update', {
-            message_types: this.selectedMessageTypes
-          }).catch(error => {
-            console.error('Error updating message types:', error);
-          });
-        },
-        
         // Sentence configuration methods
         async fetchSentences() {
           try {
