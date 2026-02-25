@@ -52,8 +52,11 @@ class NMEAHandler:
     }
     
     # Sentences auto-enabled on connection for dashboard display
-    # These are enabled in addition to device defaults
-    REQUIRED_SENTENCES = ['MWVR', 'MWVT', 'MWD', 'HDT', 'ROT', 'ZDA']
+    REQUIRED_SENTENCES = ['MWVR', 'MWVT', 'MWD', 'HDT', 'VTG', 'ROT', 'ZDA']
+
+    # Sentence codes forwarded to the autopilot via UDP.
+    # ArduPilot accepts: MWV (wind vane), GGA/RMC (GPS), VTG (course/speed), HDT (heading true).
+    AUTOPILOT_SENTENCES = {'MWV', 'GGA', 'RMC', 'VTG', 'HDT'}
     
     # Connection status phases
     CONN_STATUS_DISCONNECTED = 'disconnected'
@@ -478,8 +481,8 @@ class NMEAHandler:
                         # Push derived aggregates/status (throttled)
                         self._emit_sensor_if_due()
                         self._emit_status_if_due()
-                        # Stream WIMWV to autopilot via UDP (ArduRover NMEA wind vane).
-                        if self.is_streaming and msg_type == 'WIMWV':
+                        # Forward to autopilot via UDP if it's a sentence ArduPilot accepts.
+                        if self.is_streaming and len(msg_type) >= 3 and msg_type[-3:] in self.AUTOPILOT_SENTENCES:
                             self.stream_message(data, msg_type)
                 except Exception as e:
                     err_str = str(e)
@@ -763,8 +766,8 @@ class NMEAHandler:
             self.state['is_streaming'] = True
             self.save_state()
             self.app_logger.info(
-                "UDP streaming WIMWV to host.docker.internal:27000 "
-                "(ArduRover NMEA wind vane)"
+                "UDP streaming to host.docker.internal:27000 — "
+                "sentences: %s", ', '.join(sorted(self.AUTOPILOT_SENTENCES))
             )
             return True, "Streaming started"
         except Exception as e:
@@ -787,8 +790,8 @@ class NMEAHandler:
             return False, str(e)
 
     def stream_message(self, message, msg_type):
-        """Stream WIMWV message via UDP to autopilot"""
-        if self.is_streaming and msg_type == 'WIMWV':
+        """Stream NMEA message via UDP to autopilot (ArduPilot-accepted sentences only)"""
+        if self.is_streaming:
             self.app_logger.info(f"Attempting to stream message type: {msg_type}")
             try:
                 # Check if socket is still valid
