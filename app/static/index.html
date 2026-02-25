@@ -1027,7 +1027,7 @@
                           <span class="message-description ml-2">{{ card.description }}</span>
                         </div>
                         <div style="display:flex;align-items:center;gap:8px">
-                          <span class="rate-badge" v-if="card.hz > 0">{{ card.hz.toFixed(1) }} Hz</span>
+                          <span class="rate-badge">{{ card.hz >= 0.1 ? card.hz.toFixed(1) + ' Hz' : '...' }}</span>
                           <span class="text-caption grey--text">{{ formatTime(card.timestamp) }}</span>
                         </div>
                       </div>
@@ -1301,6 +1301,7 @@
       data: {
         messages: [],
         latestByType: {},
+        _latestByTypeVer: 0,
         availablePorts: [],
         deviceIds: [],
         hoveredUsbPosition: null,
@@ -1425,6 +1426,7 @@
           });
         },
         latestMessageCards() {
+          void this._latestByTypeVer;
           return Object.values(this.latestByType)
             .map(entry => {
               const parsed = this.parseNMEA(entry.raw, entry.type);
@@ -1534,6 +1536,7 @@
           }
           const now = Date.now() / 1000;
           Object.keys(byType).forEach(t => {
+            if (this.latestByType[t]) return;
             this.$set(this.latestByType, t, {
               raw: byType[t].raw,
               type: t,
@@ -1542,6 +1545,7 @@
               _timestamps: [now]
             });
           });
+          this._latestByTypeVer++;
         },
         startSse() {
           if (this._eventSource) return;
@@ -1593,6 +1597,7 @@
                 hz: hz,
                 _timestamps: recent
               });
+              this._latestByTypeVer++;
             } catch (e) {}
           });
           es.addEventListener('sensor_data', (ev) => {
@@ -2263,6 +2268,7 @@
               this.stopPolling();
               this.messages = [];
               this.latestByType = {};
+              this._latestByTypeVer = 0;
               this.availableMessageTypes = [];
               this.selectedMessageTypes = [];
               this.isStreaming = false;
