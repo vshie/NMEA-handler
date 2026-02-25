@@ -5,6 +5,7 @@ import serial.tools.list_ports
 import logging
 import json
 import socket
+import asyncio
 from pathlib import Path
 from flask import Flask, jsonify, request, send_file, send_from_directory, Response
 from flask_cors import CORS
@@ -13,6 +14,12 @@ import re
 import threading
 import time
 import queue
+
+try:
+    import websockets
+    HAS_WEBSOCKETS = True
+except ImportError:
+    HAS_WEBSOCKETS = False
 
 app = Flask(__name__, static_folder='static')
 CORS(app)
@@ -123,6 +130,12 @@ class NMEAHandler:
         self._serial_lock = threading.Lock()
         # Throttle "no data" serial read errors (log at most once per 30s)
         self._last_serial_read_error_log = 0
+
+        # Cockpit data-lake WebSocket server (port 8765)
+        self._ws_clients = set()
+        self._ws_loop = None
+        if HAS_WEBSOCKETS:
+            self._start_ws_server()
         
         # Aggregated sensor data for dashboard display
         self.sensor_data = {
@@ -570,6 +583,10 @@ class NMEAHandler:
                         self.sensor_data['wind_apparent']['timestamp'] = timestamp
                         self._record_history('wind_apparent_speed', speed)
                         self._record_history('wind_apparent_angle', angle)
+                        if speed is not None:
+                            self.ws_broadcast('wind-apparent-speed-kts', round(speed, 1))
+                        if angle is not None:
+                            self.ws_broadcast('wind-apparent-angle', round(angle, 1))
                     elif reference == 'T':
                         self.sensor_data['wind_true']['angle'] = angle
                         self.sensor_data['wind_true']['speed_kts'] = speed
@@ -593,6 +610,11 @@ class NMEAHandler:
                     self.sensor_data['wind_true']['timestamp'] = timestamp
                     self._record_history('wind_true_direction', dir_true)
                     self._record_history('wind_true_speed', speed_kts)
+                    # Broadcast to Cockpit data-lake
+                    if dir_true is not None:
+                        self.ws_broadcast('wind-direction-true', round(dir_true, 1))
+                    if speed_kts is not None:
+                        self.ws_broadcast('wind-speed-kts', round(speed_kts, 1))
             
             # WIMDA - Meteorological Composite
             elif msg_type == 'WIMDA':
@@ -846,6 +868,52 @@ class NMEAHandler:
                     self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 except Exception as socket_error:
                     self.app_logger.error(f"Failed to recreate socket: {socket_error}")
+
+    # ── Cockpit data-lake WebSocket ──────────────────────────────────
+
+    def _start_ws_server(self):
+        """Start the Cockpit data-lake WebSocket server on a background thread."""
+        def _run():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            self._ws_loop = loop
+            loop.run_until_complete(self._ws_serve())
+
+        t = threading.Thread(target=_run, daemon=True, name='cockpit-ws')
+        t.start()
+        self.app_logger.info("Cockpit data-lake WebSocket server starting on port 8765")
+
+    async def _ws_serve(self):
+        async with websockets.serve(self._ws_handler, '0.0.0.0', 8765):
+            await asyncio.Future()
+
+    async def _ws_handler(self, ws):
+        self._ws_clients.add(ws)
+        self.app_logger.info(f"Cockpit WebSocket client connected ({len(self._ws_clients)} total)")
+        try:
+            await ws.send("cockpit-ws-status=connected")
+            async for _ in ws:
+                pass
+        except websockets.ConnectionClosed:
+            pass
+        finally:
+            self._ws_clients.discard(ws)
+            self.app_logger.info(f"Cockpit WebSocket client disconnected ({len(self._ws_clients)} total)")
+
+    def ws_broadcast(self, variable, value):
+        """Send a variable=value pair to all connected Cockpit clients."""
+        if not self._ws_clients or self._ws_loop is None:
+            return
+        msg = f"{variable}={value}"
+        dead = set()
+        for ws in list(self._ws_clients):
+            try:
+                asyncio.run_coroutine_threadsafe(ws.send(msg), self._ws_loop)
+            except Exception:
+                dead.add(ws)
+        self._ws_clients -= dead
+
+    # ── Serial port discovery ─────────────────────────────────────
 
     def get_ports(self):
         """Get list of available serial ports"""

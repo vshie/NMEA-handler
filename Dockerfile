@@ -25,14 +25,16 @@ RUN pip install --no-cache-dir flask==2.0.1 && \
     pip install --no-cache-dir MarkupSafe==2.0.1 && \
     pip install --no-cache-dir itsdangerous==2.0.1 && \
     pip install --no-cache-dir flask-cors==3.0.10 && \
-    pip install --no-cache-dir waitress==2.1.2
+    pip install --no-cache-dir waitress==2.1.2 && \
+    pip install --no-cache-dir websockets
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV FLASK_APP=app.py
 
-# Expose port
+# Expose ports (6436 = web UI, 8765 = Cockpit data-lake WebSocket)
 EXPOSE 6436
+EXPOSE 8765
 
 # BlueOS extension metadata
 LABEL org.blueos.type="tool"
@@ -48,7 +50,8 @@ ARG IMAGE_NAME
 LABEL permissions='\
 {\
   "ExposedPorts": {\
-    "6436/tcp": {}\
+    "6436/tcp": {},\
+    "8765/tcp": {}\
   },\
   "HostConfig": {\
     "CpuPeriod": 100000,\
@@ -58,13 +61,7 @@ LABEL permissions='\
       "/dev:/dev"\
     ],\
     "ExtraHosts": ["host.docker.internal:host-gateway"],\
-    "PortBindings": {\
-      "6436/tcp": [\
-        {\
-          "HostPort": ""\
-        }\
-      ]\
-    },\
+    "NetworkMode": "host",\
     "Privileged": true\
   }\
 }'
