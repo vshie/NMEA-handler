@@ -213,7 +213,7 @@ class NMEAHandler:
         self.nmea_logger.setLevel(logging.INFO)
         
         # Set up file handler for application logs
-        app_log_path = log_dir / 'nmea_handler.log'
+        app_log_path = log_dir / '300wx.log'
         app_fh = logging.FileHandler(app_log_path, mode='a')
         app_fh.setLevel(logging.INFO)
         app_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
@@ -1733,11 +1733,11 @@ def index():
 def register_service():
     """Provide extension metadata to BlueOS"""
     return jsonify({
-        "name": "NMEA Handler",
-        "description": "Route nmea data",
-        "icon": "mdi-briefcase-minus-outline",
+        "name": "Airmar 300WX",
+        "description": "Airmar 300WX WeatherStation interface for BlueOS",
+        "icon": "mdi-weather-windy",
         "company": "Blue Robotics",
-        "version": "0.0.1",
+        "version": "0.1.0",
         "webpage": "https://github.com/vshie/NMEA-handler",
         "api": "https://github.com/vshie/NMEA-handler"
     })
@@ -1748,9 +1748,9 @@ def docs():
     return jsonify({
         "openapi": "3.0.0",
         "info": {
-            "title": "NMEA Handler API",
+            "title": "Airmar 300WX API",
             "version": "0.1",
-            "description": "API for monitoring and logging NMEA messages"
+            "description": "API for Airmar 300WX WeatherStation"
         },
         "paths": {
             "/api/serial/ports": {
@@ -1950,10 +1950,21 @@ def delete_logs():
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
 
+@app.route('/api/logs/app/delete', methods=['POST'])
+def delete_app_logs():
+    """Delete application log file"""
+    try:
+        app_log_path = Path('/app/logs/300wx.log')
+        if app_log_path.exists():
+            app_log_path.unlink()
+        return jsonify({"success": True, "message": "Application log deleted successfully"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
 @app.route('/api/logs/app', methods=['GET'])
 def download_app_logs():
     """Download application log file"""
-    app_log_path = Path('/app/logs/nmea_handler.log')
+    app_log_path = Path('/app/logs/300wx.log')
     if not app_log_path.exists():
         return jsonify({
             "success": False,
@@ -1967,7 +1978,7 @@ def get_logs_info():
     log_dir = Path('/app/logs')
     logs = []
     
-    for log_file in [nmea_handler.log_path, log_dir / 'nmea_handler.log']:
+    for log_file in [nmea_handler.log_path, log_dir / '300wx.log']:
         if log_file.exists():
             stat = log_file.stat()
             logs.append({
@@ -2002,7 +2013,7 @@ def get_log_preview():
     if log_type == 'nmea':
         log_path = nmea_handler.log_path
     else:
-        log_path = Path('/app/logs/nmea_handler.log')
+        log_path = Path('/app/logs/300wx.log')
     
     if not log_path.exists():
         return jsonify({'lines': [], 'total_lines': 0})

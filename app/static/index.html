@@ -1236,7 +1236,7 @@
                       <v-card outlined>
                         <v-card-title class="text-subtitle-1">
                           <v-icon left>mdi-file-document-outline</v-icon>
-                          nmea_handler.log
+                          300wx.log
                           <v-spacer></v-spacer>
                           <v-chip small v-if="logsInfo.app" class="ml-2">{{ logsInfo.app.size_human }}</v-chip>
                         </v-card-title>
@@ -1250,6 +1250,10 @@
                           <v-btn color="primary" small @click="downloadAppLogs">
                             <v-icon left small>mdi-download</v-icon>
                             Download
+                          </v-btn>
+                          <v-btn color="error" small @click="confirmDeleteAppLogs">
+                            <v-icon left small>mdi-delete</v-icon>
+                            Delete
                           </v-btn>
                           <v-btn text small @click="showLogPreview('app')">
                             <v-icon left small>mdi-eye</v-icon>
@@ -1797,7 +1801,7 @@
             const response = await axios.get('/api/logs/info');
             const logs = response.data.logs;
             this.logsInfo.nmea = logs.find(l => l.name === 'nmea_messages.log') || null;
-            this.logsInfo.app = logs.find(l => l.name === 'nmea_handler.log') || null;
+            this.logsInfo.app = logs.find(l => l.name === '300wx.log') || null;
           } catch (error) {
             console.error('Error fetching logs info:', error);
           }
@@ -2156,6 +2160,16 @@
             const connectingStatuses = ['trying_4800', 'trying_38400', 'switching_baud', 'enabling_sentences'];
             this.isConnecting = connectingStatuses.includes(this.connectionInfo.status);
             
+            // Sync connected port into the dropdown so it shows during auto-connect
+            if (this.connectionInfo.connected && this.connectionInfo.port) {
+              if (!this.availablePorts.includes(this.connectionInfo.port)) {
+                this.availablePorts = [...this.availablePorts, this.connectionInfo.port].sort();
+              }
+              if (!this.selectedPort) {
+                this.selectedPort = this.connectionInfo.port;
+              }
+            }
+            
             // If connected and not polling, start polling
             if (this.connectionInfo.connected && !this.pollingInterval) {
               this.startPolling();
@@ -2400,8 +2414,21 @@
           }
         },
         confirmDeleteLogs() {
-          if (confirm('Are you sure you want to delete all logs? This action cannot be undone.')) {
+          if (confirm('Are you sure you want to delete the NMEA message log? This action cannot be undone.')) {
             this.deleteLogs();
+          }
+        },
+        async deleteAppLogs() {
+          try {
+            await axios.post('/api/logs/app/delete');
+            this.fetchLogsInfo();
+          } catch (error) {
+            console.error('Error deleting app logs:', error);
+          }
+        },
+        confirmDeleteAppLogs() {
+          if (confirm('Are you sure you want to delete the application log? This action cannot be undone.')) {
+            this.deleteAppLogs();
           }
         },
         startPolling() {
