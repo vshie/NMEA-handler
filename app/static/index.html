@@ -1100,7 +1100,27 @@
                   <v-alert v-if="sentenceConfigMessage" :type="sentenceConfigSuccess ? 'success' : 'error'" dense dismissible class="mb-4" @input="sentenceConfigMessage = ''">
                     {{ sentenceConfigMessage }}
                   </v-alert>
-                  
+
+                  <!-- Bandwidth usage indicator -->
+                  <div v-if="sentences.length > 0" class="mb-4">
+                    <div class="d-flex align-center mb-1">
+                      <span class="text-caption font-weight-medium mr-2">Bus bandwidth:</span>
+                      <span class="text-caption" :class="bandwidthColor">
+                        {{ bandwidthCharsPerSec }} chars/s of {{ bandwidthCapacity }} ({{ bandwidthPercent }}%)
+                      </span>
+                      <span class="text-caption grey--text ml-2">@ {{ connectionInfo.baud_rate || 4800 }} baud</span>
+                    </div>
+                    <v-progress-linear
+                      :value="Math.min(bandwidthPercent, 100)"
+                      :color="bandwidthBarColor"
+                      height="8"
+                      rounded
+                    ></v-progress-linear>
+                    <div v-if="bandwidthPercent > 95" class="text-caption red--text mt-1">
+                      WARNING: Near or over capacity. Reduce enabled sentences, lower their rate, or switch to 38400 baud.
+                    </div>
+                  </div>
+
                   <v-simple-table dense v-if="sentences.length > 0">
                     <template v-slot:default>
                       <thead>
@@ -1424,6 +1444,36 @@
             }
           }
           return latest !== null ? new Date(latest).toISOString() : null;
+        },
+        // Bandwidth: NMEA 0183 uses 10 bits per character (8N1 + start bit)
+        bandwidthCapacity() {
+          const baud = this.connectionInfo.baud_rate || 4800;
+          return Math.floor(baud / 10);
+        },
+        bandwidthCharsPerSec() {
+          let total = 0;
+          this.sentences.forEach(s => {
+            if (this.sentenceConfig[s.id]) {
+              const interval = this.sentenceIntervals[s.id] ?? (s.default_interval / 10);
+              const hz = 1 / Math.max(interval, 0.1);
+              total += (s.max_chars || 82) * hz;
+            }
+          });
+          return Math.round(total);
+        },
+        bandwidthPercent() {
+          if (!this.bandwidthCapacity) return 0;
+          return Math.round((this.bandwidthCharsPerSec / this.bandwidthCapacity) * 100);
+        },
+        bandwidthColor() {
+          if (this.bandwidthPercent > 95) return 'red--text font-weight-bold';
+          if (this.bandwidthPercent > 75) return 'orange--text';
+          return 'green--text';
+        },
+        bandwidthBarColor() {
+          if (this.bandwidthPercent > 95) return 'red';
+          if (this.bandwidthPercent > 75) return 'orange';
+          return 'green';
         }
       },
       watch: {
@@ -2048,8 +2098,7 @@
           this.startConnectionStatusPolling();
           
           try {
-            const payload = { port: this.selectedPort };
-            if (this.stayAt4800Baud) payload.baud_rate = 4800;
+            const payload = { port: this.selectedPort, stay_at_4800: !!this.stayAt4800Baud };
             const response = await axios.post('/api/serial/select', payload);
             
             // Stop connection status polling

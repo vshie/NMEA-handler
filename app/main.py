@@ -20,34 +20,35 @@ CORS(app)
 class NMEAHandler:
     # Complete registry of all WX200 supported NMEA sentences
     # Based on WX Series NMEA 0183 Developers Technical Manual
+    # max_chars: worst-case sentence length from WX Series manual Table 1 (incl $, *hh, CR, LF = +7)
     SUPPORTED_SENTENCES = {
-        'DTM':   {'name': 'Datum Reference', 'description': 'GPS datum reference', 'default_enabled': False, 'default_interval': 10},
-        'GGA':   {'name': 'GPS Fix Data', 'description': 'Position, altitude, satellites, fix quality', 'default_enabled': True, 'default_interval': 10},
-        'GLL':   {'name': 'Geographic Position', 'description': 'Latitude/Longitude position', 'default_enabled': False, 'default_interval': 10},
-        'GSA':   {'name': 'DOP & Satellites', 'description': 'GPS dilution of precision and active satellites', 'default_enabled': False, 'default_interval': 10},
-        'GSV':   {'name': 'Satellites in View', 'description': 'Satellite details (azimuth, elevation, SNR)', 'default_enabled': False, 'default_interval': 10},
-        'HDG':   {'name': 'Heading (Magnetic)', 'description': 'Magnetic heading with deviation and variation', 'default_enabled': True, 'default_interval': 10},
-        'HDT':   {'name': 'Heading (True)', 'description': 'True heading relative to north', 'default_enabled': False, 'default_interval': 10},
-        'MDA':   {'name': 'Meteorological Composite', 'description': 'Pressure, temperature, humidity, dew point, wind', 'default_enabled': True, 'default_interval': 10},
-        'MWD':   {'name': 'Wind Direction (True)', 'description': 'True wind direction and speed relative to north', 'default_enabled': False, 'default_interval': 10},
-        'MWVR': {'name': 'Wind (Apparent)', 'description': 'Relative/apparent wind speed and angle', 'default_enabled': True, 'default_interval': 10},
-        'MWVT': {'name': 'Wind (True)', 'description': 'True/theoretical wind speed and angle', 'default_enabled': False, 'default_interval': 10},
-        'RMC':   {'name': 'Recommended Minimum', 'description': 'Position, speed, course, date, magnetic variation', 'default_enabled': True, 'default_interval': 10},
-        'ROT':   {'name': 'Rate of Turn', 'description': 'Rate of turn in degrees per minute', 'default_enabled': False, 'default_interval': 10},
-        'THS':   {'name': 'True Heading & Status', 'description': 'True heading with mode indicator', 'default_enabled': False, 'default_interval': 10},
-        'VTG':   {'name': 'Course Over Ground', 'description': 'Course and speed over ground', 'default_enabled': False, 'default_interval': 10},
-        'VWR':   {'name': 'Relative Wind (Alt)', 'description': 'Relative wind speed and angle (alternative format)', 'default_enabled': False, 'default_interval': 10},
-        'VWT':   {'name': 'True Wind (Alt)', 'description': 'True wind speed and angle (alternative format)', 'default_enabled': True, 'default_interval': 10},
-        'XDRA': {'name': 'Transducer A', 'description': 'Wind chill, heat index, station pressure', 'default_enabled': True, 'default_interval': 10},
-        'XDRB': {'name': 'Transducer B', 'description': 'Pitch and roll angles', 'default_enabled': True, 'default_interval': 10},
-        'XDRC': {'name': 'Transducer C', 'description': 'X, Y, Z accelerometer readings', 'default_enabled': False, 'default_interval': 10},
-        'XDRD': {'name': 'Transducer D', 'description': 'Compensated rate gyros (roll, pitch, yaw)', 'default_enabled': True, 'default_interval': 10},
-        'XDRE': {'name': 'Transducer E', 'description': 'Raw rate gyros (roll, pitch, yaw)', 'default_enabled': False, 'default_interval': 10},
-        'XDRH': {'name': 'Transducer H', 'description': 'Heater temperatures and voltages', 'default_enabled': False, 'default_interval': 10},
-        'XDRR': {'name': 'Transducer R', 'description': 'Rain accumulation, duration, rate', 'default_enabled': False, 'default_interval': 10},
-        'XDRT': {'name': 'Transducer T', 'description': 'Internal temperatures and voltages', 'default_enabled': False, 'default_interval': 10},
-        'XDRW': {'name': 'Transducer W', 'description': 'Raw/unfiltered wind measurements', 'default_enabled': False, 'default_interval': 10},
-        'ZDA':   {'name': 'Time & Date', 'description': 'UTC time and date', 'default_enabled': False, 'default_interval': 10},
+        'DTM':   {'name': 'Datum Reference', 'description': 'GPS datum reference', 'default_enabled': False, 'default_interval': 10, 'max_chars': 47},
+        'GGA':   {'name': 'GPS Fix Data', 'description': 'Position, altitude, satellites, fix quality', 'default_enabled': True, 'default_interval': 10, 'max_chars': 82},
+        'GLL':   {'name': 'Geographic Position', 'description': 'Latitude/Longitude position', 'default_enabled': False, 'default_interval': 10, 'max_chars': 48},
+        'GSA':   {'name': 'DOP & Satellites', 'description': 'GPS dilution of precision and active satellites', 'default_enabled': False, 'default_interval': 10, 'max_chars': 66},
+        'GSV':   {'name': 'Satellites in View', 'description': 'Satellite details (azimuth, elevation, SNR)', 'default_enabled': False, 'default_interval': 10, 'max_chars': 210},
+        'HDG':   {'name': 'Heading (Magnetic)', 'description': 'Magnetic heading with deviation and variation', 'default_enabled': True, 'default_interval': 10, 'max_chars': 33},
+        'HDT':   {'name': 'Heading (True)', 'description': 'True heading relative to north', 'default_enabled': False, 'default_interval': 10, 'max_chars': 18},
+        'MDA':   {'name': 'Meteorological Composite', 'description': 'Pressure, temperature, humidity, dew point, wind', 'default_enabled': True, 'default_interval': 10, 'max_chars': 82},
+        'MWD':   {'name': 'Wind Direction (True)', 'description': 'True wind direction and speed relative to north', 'default_enabled': False, 'default_interval': 10, 'max_chars': 55},
+        'MWVR': {'name': 'Wind (Apparent)', 'description': 'Relative/apparent wind speed and angle', 'default_enabled': True, 'default_interval': 10, 'max_chars': 30},
+        'MWVT': {'name': 'Wind (True)', 'description': 'True/theoretical wind speed and angle', 'default_enabled': False, 'default_interval': 10, 'max_chars': 30},
+        'RMC':   {'name': 'Recommended Minimum', 'description': 'Position, speed, course, date, magnetic variation', 'default_enabled': True, 'default_interval': 10, 'max_chars': 72},
+        'ROT':   {'name': 'Rate of Turn', 'description': 'Rate of turn in degrees per minute', 'default_enabled': False, 'default_interval': 10, 'max_chars': 18},
+        'THS':   {'name': 'True Heading & Status', 'description': 'True heading with mode indicator', 'default_enabled': False, 'default_interval': 10, 'max_chars': 25},
+        'VTG':   {'name': 'Course Over Ground', 'description': 'Course and speed over ground', 'default_enabled': False, 'default_interval': 10, 'max_chars': 42},
+        'VWR':   {'name': 'Relative Wind (Alt)', 'description': 'Relative wind speed and angle (alternative format)', 'default_enabled': False, 'default_interval': 10, 'max_chars': 47},
+        'VWT':   {'name': 'True Wind (Alt)', 'description': 'True wind speed and angle (alternative format)', 'default_enabled': True, 'default_interval': 10, 'max_chars': 47},
+        'XDRA': {'name': 'Transducer A', 'description': 'Wind chill, heat index, station pressure', 'default_enabled': True, 'default_interval': 10, 'max_chars': 70},
+        'XDRB': {'name': 'Transducer B', 'description': 'Pitch and roll angles', 'default_enabled': True, 'default_interval': 10, 'max_chars': 42},
+        'XDRC': {'name': 'Transducer C', 'description': 'X, Y, Z accelerometer readings', 'default_enabled': False, 'default_interval': 10, 'max_chars': 60},
+        'XDRD': {'name': 'Transducer D', 'description': 'Compensated rate gyros (roll, pitch, yaw)', 'default_enabled': True, 'default_interval': 10, 'max_chars': 60},
+        'XDRE': {'name': 'Transducer E', 'description': 'Raw rate gyros (roll, pitch, yaw)', 'default_enabled': False, 'default_interval': 10, 'max_chars': 60},
+        'XDRH': {'name': 'Transducer H', 'description': 'Heater temperatures and voltages', 'default_enabled': False, 'default_interval': 10, 'max_chars': 70},
+        'XDRR': {'name': 'Transducer R', 'description': 'Rain accumulation, duration, rate', 'default_enabled': False, 'default_interval': 10, 'max_chars': 70},
+        'XDRT': {'name': 'Transducer T', 'description': 'Internal temperatures and voltages', 'default_enabled': False, 'default_interval': 10, 'max_chars': 70},
+        'XDRW': {'name': 'Transducer W', 'description': 'Raw/unfiltered wind measurements', 'default_enabled': False, 'default_interval': 10, 'max_chars': 42},
+        'ZDA':   {'name': 'Time & Date', 'description': 'UTC time and date', 'default_enabled': False, 'default_interval': 10, 'max_chars': 38},
     }
     
     # Sentences auto-enabled on connection for dashboard display
@@ -1382,6 +1383,7 @@ class NMEAHandler:
                 'description': config['description'],
                 'default_enabled': config['default_enabled'],
                 'default_interval': config['default_interval'],
+                'max_chars': config.get('max_chars', 82),
                 'required': sentence_id in self.REQUIRED_SENTENCES
             })
         
@@ -1389,15 +1391,20 @@ class NMEAHandler:
         sentences.sort(key=lambda x: x['id'])
         return sentences
 
-    def connect_serial(self, port, baud_rate=None):
+    def connect_serial(self, port, baud_rate=None, stay_at_4800=False):
         """
         Connect to serial port with automatic baud rate negotiation.
         
-        Connection sequence:
-        1. Try 4800 baud - if successful, switch to 38400 baud
+        Args:
+            port: Serial port path
+            baud_rate: Hint for which baud to try first (saved state); does NOT control stay_at_4800
+            stay_at_4800: If True, never switch to 38400 (only set from explicit user checkbox)
+        
+        Connection sequence (unless stay_at_4800):
+        1. Try 4800 baud - if successful, switch to 38400 per manual sequence
         2. If 4800 fails, try 38400 baud (device may already be configured)
         3. Toggle between baud rates until successful or max retries
-        4. Once at 38400 baud, enable required sentences
+        4. Once at target baud, enable required sentences
         """
         try:
             # Clean up any existing connection
@@ -1414,19 +1421,25 @@ class NMEAHandler:
             
             self.detected_baud = None
             max_attempts = 6  # 3 attempts at each baud rate
-            # If caller requests 38400 (e.g. saved state), try 38400 first
-            baud_rates = [38400, 4800] if baud_rate == 38400 else [4800, 38400]
+            if stay_at_4800:
+                baud_rates = [4800]
+            elif baud_rate == 38400:
+                baud_rates = [38400, 4800]
+            else:
+                baud_rates = [4800, 38400]
             
             # Try to establish connection
+            n_bauds = len(baud_rates)
             for attempt in range(max_attempts):
-                current_baud = baud_rates[attempt % 2]
+                current_baud = baud_rates[attempt % n_bauds]
+                attempt_num = attempt // n_bauds + 1
+                max_per_baud = max_attempts // n_bauds
                 
                 if current_baud == 4800:
                     self.connection_status = self.CONN_STATUS_TRYING_4800
-                    self.connection_message = f'Trying {current_baud} baud (attempt {attempt // 2 + 1}/3)...'
                 else:
                     self.connection_status = self.CONN_STATUS_TRYING_38400
-                    self.connection_message = f'Trying {current_baud} baud (attempt {attempt // 2 + 1}/3)...'
+                self.connection_message = f'Trying {current_baud} baud (attempt {attempt_num}/{max_per_baud})...'
                 
                 self.app_logger.info(self.connection_message)
                 
@@ -1437,7 +1450,6 @@ class NMEAHandler:
                     self.detected_baud = current_baud
                     self.state['port'] = port
                     
-                    stay_at_4800 = (baud_rate == 4800)
                     if current_baud == 4800 and not stay_at_4800:
                         # Connected at 4800, switch to 38400 unless user requested 4800 only
                         self.app_logger.info("Connected at 4800 baud, switching to 38400...")
@@ -1769,12 +1781,13 @@ def select_port():
     if not data or 'port' not in data:
         return jsonify({"success": False, "message": "No port specified"})
     
-    # Prefer saved baud when reconnecting to same port (e.g. after disconnect)
+    # Use saved baud as a hint for which rate to try first (e.g. 38400 if already switched)
     if data['port'] == nmea_handler.state.get('port'):
-        baud_rate = data.get('baud_rate') or nmea_handler.state.get('baud_rate', 4800)
+        baud_rate = nmea_handler.state.get('baud_rate', 4800)
     else:
-        baud_rate = data.get('baud_rate', 4800)
-    success, message = nmea_handler.connect_serial(data['port'], baud_rate)
+        baud_rate = 4800
+    stay_at_4800 = bool(data.get('stay_at_4800', False))
+    success, message = nmea_handler.connect_serial(data['port'], baud_rate, stay_at_4800=stay_at_4800)
     return jsonify({"success": success, "message": message})
 
 @app.route('/api/serial/disconnect', methods=['POST'])
