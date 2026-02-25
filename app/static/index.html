@@ -154,6 +154,15 @@
       border-radius: 4px;
       word-break: break-all;
     }
+    .rate-badge {
+      background-color: #43a047;
+      color: white;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
     .connection-status {
       margin: 10px 0;
     }
@@ -1008,25 +1017,28 @@
               <v-tab-item>
                 <v-card-text>
                   <div class="terminal">
-                    <div v-for="(message, index) in parsedMessages" :key="index" class="message-card">
+                    <div v-for="card in latestMessageCards" :key="card.type" class="message-card">
                       <div class="message-header">
                         <div>
-                          <span class="message-type-badge">{{ message.type }}</span>
-                          <span class="message-description ml-2">{{ message.description }}</span>
+                          <span class="message-type-badge">{{ card.type }}</span>
+                          <span class="message-description ml-2">{{ card.description }}</span>
                         </div>
-                        <span class="text-caption grey--text">{{ formatTime(message.timestamp) }}</span>
+                        <div style="display:flex;align-items:center;gap:8px">
+                          <span class="rate-badge" v-if="card.hz > 0">{{ card.hz.toFixed(1) }} Hz</span>
+                          <span class="text-caption grey--text">{{ formatTime(card.timestamp) }}</span>
+                        </div>
                       </div>
-                      <div class="parsed-values" v-if="message.values && message.values.length > 0">
-                        <div class="parsed-value" v-for="(val, vIndex) in message.values" :key="vIndex">
+                      <div class="parsed-values" v-if="card.values && card.values.length > 0">
+                        <div class="parsed-value" v-for="(val, vIndex) in card.values" :key="vIndex">
                           <div class="parsed-value-label">{{ val.label }}</div>
                           <div class="parsed-value-data">
                             {{ val.value }}<span class="parsed-value-unit" v-if="val.unit">{{ val.unit }}</span>
                           </div>
                         </div>
                       </div>
-                      <div class="raw-message">{{ message.raw }}</div>
+                      <div class="raw-message">{{ card.raw }}</div>
                     </div>
-                    <div v-if="parsedMessages.length === 0" class="text-center pa-4">
+                    <div v-if="latestMessageCards.length === 0" class="text-center pa-4">
                       No messages received yet. Connect to a serial port to start receiving messages.
                     </div>
                   </div>
@@ -1285,6 +1297,7 @@
       vuetify: new Vuetify(),
       data: {
         messages: [],
+        latestByType: {},
         availablePorts: [],
         deviceIds: [],
         hoveredUsbPosition: null,
@@ -1408,6 +1421,21 @@
             };
           });
         },
+        latestMessageCards() {
+          return Object.values(this.latestByType)
+            .map(entry => {
+              const parsed = this.parseNMEA(entry.raw, entry.type);
+              return {
+                type: entry.type,
+                description: this.nmeaDescriptions[entry.type] || 'Unknown',
+                raw: entry.raw,
+                timestamp: entry.timestamp,
+                hz: entry.hz,
+                values: parsed
+              };
+            })
+            .sort((a, b) => a.type.localeCompare(b.type));
+        },
         connectionStatusText() {
           const statusMap = {
             'disconnected': 'Disconnected',
@@ -1524,6 +1552,24 @@
               const msg = JSON.parse(ev.data);
               this.messages.unshift(msg);
               if (this.messages.length > 200) this.messages.pop();
+
+              const t = msg.type;
+              if (!t) return;
+              const now = Date.now() / 1000;
+              const prev = this.latestByType[t];
+              const timestamps = prev ? prev._timestamps.concat(now) : [now];
+              const cutoff = now - 5;
+              const recent = timestamps.filter(ts => ts > cutoff);
+              const hz = recent.length >= 2
+                ? (recent.length - 1) / (recent[recent.length - 1] - recent[0])
+                : 0;
+              this.$set(this.latestByType, t, {
+                raw: msg.raw,
+                type: t,
+                timestamp: msg.timestamp,
+                hz: hz,
+                _timestamps: recent
+              });
             } catch (e) {}
           });
           es.addEventListener('sensor_data', (ev) => {
