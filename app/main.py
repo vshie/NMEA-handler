@@ -54,9 +54,12 @@ class NMEAHandler:
     # Sentences auto-enabled on connection for dashboard display
     REQUIRED_SENTENCES = ['MWVR', 'MWVT', 'MWD', 'HDT', 'VTG', 'ROT', 'ZDA']
 
-    # Sentence codes forwarded to the autopilot via UDP.
-    # ArduPilot accepts: MWV (wind vane), GGA/RMC (GPS), VTG (course/speed), HDT (heading true).
-    AUTOPILOT_SENTENCES = {'MWV', 'GGA', 'RMC', 'VTG', 'HDT'}
+    # Sentence codes forwarded to the autopilot via UDP, keyed by mode.
+    AUTOPILOT_MODES = {
+        'windvane': {'MWV'},                      # ArduRover NMEA wind vane
+        'gps':      {'GGA', 'RMC', 'VTG', 'HDT'}, # External GPS + heading source
+    }
+    DEFAULT_AUTOPILOT_MODE = 'windvane'
     
     # Connection status phases
     CONN_STATUS_DISCONNECTED = 'disconnected'
@@ -118,6 +121,7 @@ class NMEAHandler:
             'port': None,
             'baud_rate': 4800,
             'is_streaming': False,
+            'autopilot_mode': self.DEFAULT_AUTOPILOT_MODE,
             'sentence_config': {}  # { sentence_id: { "enabled": bool, "interval": int (tenths) } }
         }
         # Lock so only one consumer reads from serial (reader thread vs sentence query)
@@ -253,8 +257,10 @@ class NMEAHandler:
                 self.state.update(loaded)
                 if 'sentence_config' not in self.state or not isinstance(self.state['sentence_config'], dict):
                     self.state['sentence_config'] = {}
+                if self.state.get('autopilot_mode') not in self.AUTOPILOT_MODES:
+                    self.state['autopilot_mode'] = self.DEFAULT_AUTOPILOT_MODE
                 self.is_streaming = self.state.get('is_streaming', False)
-                self.app_logger.info(f"Loaded saved state: port={self.state['port']}, baud_rate={self.state['baud_rate']}, streaming={self.is_streaming}")
+                self.app_logger.info(f"Loaded saved state: port={self.state['port']}, baud_rate={self.state['baud_rate']}, streaming={self.is_streaming}, autopilot_mode={self.state['autopilot_mode']}")
         except Exception as e:
             self.app_logger.error(f"Error loading state: {e}")
 
@@ -405,6 +411,7 @@ class NMEAHandler:
             self._sse_broadcast('stream_status', {
                 'is_streaming': self.is_streaming,
                 'streaming_to': "host.docker.internal:27000" if self.is_streaming else None,
+                'autopilot_mode': self.state.get('autopilot_mode', self.DEFAULT_AUTOPILOT_MODE),
                 'streamed_messages': self.streamed_messages,
                 'messages_received': self.messages_received,
                 'serial_health': self.get_serial_health(),
@@ -481,8 +488,9 @@ class NMEAHandler:
                         # Push derived aggregates/status (throttled)
                         self._emit_sensor_if_due()
                         self._emit_status_if_due()
-                        # Forward to autopilot via UDP if it's a sentence ArduPilot accepts.
-                        if self.is_streaming and len(msg_type) >= 3 and msg_type[-3:] in self.AUTOPILOT_SENTENCES:
+                        # Forward to autopilot via UDP based on selected mode.
+                        udp_sentences = self.AUTOPILOT_MODES.get(self.state.get('autopilot_mode'), set())
+                        if self.is_streaming and len(msg_type) >= 3 and msg_type[-3:] in udp_sentences:
                             self.stream_message(data, msg_type)
                 except Exception as e:
                     err_str = str(e)
@@ -602,6 +610,7 @@ class NMEAHandler:
                     self.sensor_data['attitude']['source'] = 'HCHDT'
                     self.sensor_data['attitude']['timestamp'] = timestamp
                     self._record_history('heading', heading)
+                    self.ws_broadcast('heading-true', round(heading, 1))
             
             # HCHDG / CHDG - Heading Magnetic
             elif msg_type in ('HCHDG', 'CHDG'):
@@ -666,6 +675,14 @@ class NMEAHandler:
                     self.sensor_data['gps']['source'] = 'GPGGA'
                     self.sensor_data['gps']['timestamp'] = timestamp
                     self._record_history('satellites', satellites)
+                    if lat is not None:
+                        self.ws_broadcast('gps-latitude', round(lat, 7))
+                    if lon is not None:
+                        self.ws_broadcast('gps-longitude', round(lon, 7))
+                    if altitude is not None:
+                        self.ws_broadcast('gps-altitude-m', round(altitude, 1))
+                    self.ws_broadcast('gps-satellites', satellites)
+                    self.ws_broadcast('gps-fix-quality', fix_quality)
             
             # GPVTG - Course Over Ground and Ground Speed
             elif msg_type == 'GPVTG':
@@ -678,6 +695,10 @@ class NMEAHandler:
                     self.sensor_data['gps']['speed_kts'] = speed_kts
                     self._record_history('gps_speed', speed_kts)
                     self._record_history('gps_course', course)
+                    if course is not None:
+                        self.ws_broadcast('gps-course-true', round(course, 1))
+                    if speed_kts is not None:
+                        self.ws_broadcast('gps-speed-kts', round(speed_kts, 1))
                     if self.sensor_data['gps']['source'] != 'GPGGA':
                         self.sensor_data['gps']['source'] = 'GPVTG'
                         self.sensor_data['gps']['timestamp'] = timestamp
@@ -765,9 +786,11 @@ class NMEAHandler:
             self.is_streaming = True
             self.state['is_streaming'] = True
             self.save_state()
+            mode = self.state.get('autopilot_mode', self.DEFAULT_AUTOPILOT_MODE)
+            sentences = self.AUTOPILOT_MODES.get(mode, set())
             self.app_logger.info(
                 "UDP streaming to host.docker.internal:27000 — "
-                "sentences: %s", ', '.join(sorted(self.AUTOPILOT_SENTENCES))
+                "mode=%s, sentences: %s", mode, ', '.join(sorted(sentences))
             )
             return True, "Streaming started"
         except Exception as e:
@@ -790,7 +813,7 @@ class NMEAHandler:
             return False, str(e)
 
     def stream_message(self, message, msg_type):
-        """Stream NMEA message via UDP to autopilot (ArduPilot-accepted sentences only)"""
+        """Stream NMEA message via UDP to autopilot"""
         if self.is_streaming:
             self.app_logger.info(f"Attempting to stream message type: {msg_type}")
             try:
@@ -1708,6 +1731,7 @@ def sse_events():
                 'stream_status': {
                     'is_streaming': nmea_handler.is_streaming,
                     'streaming_to': "host.docker.internal:27000" if nmea_handler.is_streaming else None,
+                    'autopilot_mode': nmea_handler.state.get('autopilot_mode', nmea_handler.DEFAULT_AUTOPILOT_MODE),
                     'streamed_messages': nmea_handler.streamed_messages,
                     'messages_received': nmea_handler.messages_received,
                     'serial_health': nmea_handler.get_serial_health(),
@@ -2084,15 +2108,30 @@ def stop_streaming():
 @app.route('/api/stream/status', methods=['GET'])
 def get_streaming_status():
     """Get current streaming status"""
+    mode = nmea_handler.state.get('autopilot_mode', nmea_handler.DEFAULT_AUTOPILOT_MODE)
     return jsonify({
         "is_streaming": nmea_handler.is_streaming,
         "port": nmea_handler.state['port'],
         "baud_rate": nmea_handler.state['baud_rate'],
+        "autopilot_mode": mode,
         "streaming_to": "host.docker.internal:27000" if nmea_handler.is_streaming else None,
         "streamed_messages": nmea_handler.streamed_messages,
         "messages_received": nmea_handler.messages_received,
         "serial_health": nmea_handler.get_serial_health(),
     })
+
+@app.route('/api/stream/autopilot_mode', methods=['POST'])
+def set_autopilot_mode():
+    """Set which data to stream to the autopilot (windvane or gps)"""
+    data = request.get_json()
+    mode = data.get('mode') if data else None
+    if mode not in nmea_handler.AUTOPILOT_MODES:
+        return jsonify({"success": False, "message": f"Invalid mode. Choose from: {list(nmea_handler.AUTOPILOT_MODES.keys())}"})
+    nmea_handler.state['autopilot_mode'] = mode
+    nmea_handler.save_state()
+    sentences = nmea_handler.AUTOPILOT_MODES[mode]
+    nmea_handler.app_logger.info("Autopilot UDP mode changed to '%s' — sentences: %s", mode, ', '.join(sorted(sentences)))
+    return jsonify({"success": True, "mode": mode, "sentences": sorted(sentences)})
 
 @app.route('/api/serial/change_baud', methods=['POST'])
 def change_baud():

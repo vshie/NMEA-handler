@@ -495,10 +495,9 @@
                     <div class="d-flex align-center">
                       <v-icon class="mr-2">mdi-broadcast</v-icon>
                       <div>
-                        <strong>Streaming Active</strong>
-                        <div>Destination: {{ streamingStatus.streaming_to }}</div>
-                        <div>Messages received: {{ streamingStatus.messages_received }}</div>
-                        <div>Messages sent: {{ streamingStatus.streamed_messages }}</div>
+                        <strong>Streaming to ArduPilot</strong>
+                        <span class="ml-2 text-caption">({{ autopilotMode === 'windvane' ? 'Wind Vane' : 'GPS + Heading' }})</span>
+                        <div>UDP {{ streamingStatus.streaming_to }} &mdash; sent {{ streamingStatus.streamed_messages }} of {{ streamingStatus.messages_received }} received</div>
                       </div>
                     </div>
                   </v-alert>
@@ -726,11 +725,11 @@
                     <v-card outlined class="mb-4">
                       <v-card-title class="text-subtitle-1">
                         <v-chip small color="primary" class="mr-2" text-color="white">3</v-chip>
-                        Display Wind Data in Cockpit
+                        Display Data in Cockpit
                       </v-card-title>
                       <v-card-text>
                         <p class="body-2 mb-3">
-                          The extension streams true wind speed and direction to Cockpit's data-lake
+                          The extension streams wind, GPS, and heading data to Cockpit's data-lake
                           over WebSocket. To set it up:
                         </p>
                         <ol class="body-2" style="padding-left:20px;line-height:1.8">
@@ -760,11 +759,43 @@
                               <td><code>wind-speed-kts</code></td>
                               <td>Wind speed (knots)</td>
                             </tr>
+                            <tr>
+                              <td><code>heading-true</code></td>
+                              <td>True heading from compass (degrees)</td>
+                            </tr>
+                            <tr>
+                              <td><code>gps-latitude</code></td>
+                              <td>GPS latitude (decimal degrees)</td>
+                            </tr>
+                            <tr>
+                              <td><code>gps-longitude</code></td>
+                              <td>GPS longitude (decimal degrees)</td>
+                            </tr>
+                            <tr>
+                              <td><code>gps-altitude-m</code></td>
+                              <td>GPS altitude (metres)</td>
+                            </tr>
+                            <tr>
+                              <td><code>gps-satellites</code></td>
+                              <td>Number of GPS satellites in use</td>
+                            </tr>
+                            <tr>
+                              <td><code>gps-fix-quality</code></td>
+                              <td>GPS fix quality (0=none, 1=GPS, 2=DGPS)</td>
+                            </tr>
+                            <tr>
+                              <td><code>gps-course-true</code></td>
+                              <td>Course over ground (degrees true)</td>
+                            </tr>
+                            <tr>
+                              <td><code>gps-speed-kts</code></td>
+                              <td>Speed over ground (knots)</td>
+                            </tr>
                           </tbody>
                         </v-simple-table>
                         <p class="body-2 mb-0">
-                          These variables can be assigned to any Cockpit widget, mini-widget,
-                          or HUD overlay.
+                          All variables are streamed regardless of the ArduPilot UDP mode.
+                          They can be assigned to any Cockpit widget, mini-widget, or HUD overlay.
                         </p>
                       </v-card-text>
                     </v-card>
@@ -1329,6 +1360,43 @@
                     </div>
                   </div>
 
+                  <!-- ArduPilot UDP mode selector -->
+                  <v-card outlined class="mb-4" v-if="connectionInfo.connected">
+                    <v-card-text class="pb-2 pt-3">
+                      <div class="text-overline mb-2">ArduPilot UDP Stream (port 27000)</div>
+                      <div class="text-caption grey--text mb-3">
+                        Choose which data to forward to the autopilot via UDP.
+                        Wind and GPS data are always available in Cockpit via WebSocket regardless of this setting.
+                      </div>
+                      <v-btn-toggle
+                        :value="autopilotMode"
+                        @change="setAutopilotMode($event)"
+                        mandatory
+                        dense
+                        color="primary"
+                      >
+                        <v-btn value="windvane" small>
+                          <v-icon left small>mdi-weather-windy</v-icon>
+                          Wind Vane
+                        </v-btn>
+                        <v-btn value="gps" small>
+                          <v-icon left small>mdi-satellite-variant</v-icon>
+                          GPS + Heading
+                        </v-btn>
+                      </v-btn-toggle>
+                      <div class="text-caption mt-2">
+                        <template v-if="autopilotMode === 'windvane'">
+                          <v-icon x-small color="primary" class="mr-1">mdi-arrow-right</v-icon>
+                          Streaming <strong>MWV</strong> (apparent wind) — set <code>WNDVN_TYPE=4</code> in ArduRover
+                        </template>
+                        <template v-else>
+                          <v-icon x-small color="primary" class="mr-1">mdi-arrow-right</v-icon>
+                          Streaming <strong>GGA, RMC, VTG, HDT</strong> — configure as GPS/heading source in ArduPilot
+                        </template>
+                      </div>
+                    </v-card-text>
+                  </v-card>
+
                   <v-simple-table dense v-if="sentences.length > 0">
                     <template v-slot:default>
                       <thead>
@@ -1506,6 +1574,7 @@
         serialPortInfo: { serial_port: 'Not connected', baud_rate: 0 },
         pollingInterval: null,
         isStreaming: false,
+        autopilotMode: 'windvane',
         streamingStatus: {
           streaming_to: null,
           streamed_messages: 0,
@@ -1840,6 +1909,7 @@
             messages_per_second: (mps !== null && isFinite(mps)) ? Math.max(0, mps) : null,
             _last_count_at: now
           };
+          if (ss.autopilot_mode) this.autopilotMode = ss.autopilot_mode;
           // Keep sentence switches in sync using last-seen
           if (this.connectionInfo.connected && ss.observed_sentence_last_seen && this.sentences.length > 0) {
             this.reconcileSentenceSwitches(ss.observed_sentence_last_seen, ss.now, ss.connected_since);
@@ -2416,6 +2486,16 @@
           this.connectionInfo.status = 'disconnected';
           this.connectionInfo.message = 'Connection cancelled';
         },
+        async setAutopilotMode(mode) {
+          try {
+            const response = await axios.post('/api/stream/autopilot_mode', { mode });
+            if (response.data.success) {
+              this.autopilotMode = response.data.mode;
+            }
+          } catch (error) {
+            console.error('Error setting autopilot mode:', error);
+          }
+        },
         async toggleStreaming() {
           try {
             if (this.isStreaming) {
@@ -2443,8 +2523,10 @@
           try {
             const response = await axios.get('/api/stream/status');
             this.isStreaming = response.data.is_streaming;
+            if (response.data.autopilot_mode) this.autopilotMode = response.data.autopilot_mode;
             this.applyStreamStatus({
               streaming_to: response.data.streaming_to,
+              autopilot_mode: response.data.autopilot_mode,
               streamed_messages: response.data.streamed_messages || 0,
               messages_received: response.data.messages_received ?? 0,
               serial_health: response.data.serial_health || null

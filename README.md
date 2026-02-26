@@ -10,8 +10,8 @@ A BlueOS extension for the Airmar 300WX WeatherStation. Connects via NMEA 0183 s
 - Per-sentence enable/disable and transmission interval control
 - Bandwidth usage indicator (percentage of serial bus capacity)
 - Raw message view with one card per message type and live Hz rate
-- UDP streaming of NMEA sentences (autopilot integration)
-- Cockpit data-lake WebSocket streaming of wind data
+- UDP streaming to ArduPilot — selectable Wind Vane or GPS + Heading mode
+- Cockpit data-lake WebSocket streaming of wind, GPS, and heading data
 - Persistent NMEA message and application logs with download/delete
 
 ## Installation
@@ -56,9 +56,22 @@ When manually installing, paste this into the **Custom settings** field:
 }
 ```
 
+## ArduPilot UDP Streaming
+
+The extension forwards NMEA sentences to the autopilot via UDP on port 27000. In the **Sentences** tab, choose one of two modes:
+
+| Mode | Sentences | ArduPilot Use |
+|---|---|---|
+| **Wind Vane** (default) | `$WIMWV` | NMEA wind vane (`WNDVN_TYPE=4`) |
+| **GPS + Heading** | `$GPGGA`, `$GPRMC`, `$GPVTG`, `$HCHDT` | External GPS & heading source |
+
+Only one mode can be active at a time — sending both wind and GPS data on the same port can confuse the autopilot.
+
+See [ArduRover Wind Vane docs](https://ardupilot.org/rover/docs/wind-vane.html) for autopilot configuration.
+
 ## Cockpit WebSocket Streaming
 
-The extension streams live wind data to Cockpit's data-lake via WebSocket. This allows wind speed and direction to be displayed in Cockpit widgets, mini-widgets, and HUD overlays.
+The extension streams live wind, GPS, and heading data to Cockpit's data-lake via WebSocket (port 8765). All variables are sent **regardless of the ArduPilot UDP mode**.
 
 ### Variables Streamed
 
@@ -66,6 +79,14 @@ The extension streams live wind data to Cockpit's data-lake via WebSocket. This 
 |---|---|---|
 | `wind-direction-true` | `$WIMWD` | True wind direction relative to north (degrees) |
 | `wind-speed-kts` | `$WIMWD` | True wind speed (knots) |
+| `heading-true` | `$HCHDT` | True heading from compass (degrees) |
+| `gps-latitude` | `$GPGGA` | GPS latitude (decimal degrees) |
+| `gps-longitude` | `$GPGGA` | GPS longitude (decimal degrees) |
+| `gps-altitude-m` | `$GPGGA` | GPS altitude (metres) |
+| `gps-satellites` | `$GPGGA` | Number of GPS satellites in use |
+| `gps-fix-quality` | `$GPGGA` | GPS fix quality (0=none, 1=GPS, 2=DGPS) |
+| `gps-course-true` | `$GPVTG` | Course over ground (degrees true) |
+| `gps-speed-kts` | `$GPVTG` | Speed over ground (knots) |
 
 ### Setting Up Cockpit Connection
 
@@ -74,7 +95,7 @@ The extension streams live wind data to Cockpit's data-lake via WebSocket. This 
 3. Add the URL: `ws://{{ vehicle-address }}:8765`
    (e.g., `ws://192.168.2.2:8765`)
 
-Once connected, the wind variables will appear in Cockpit's data-lake and can be assigned to any widget or HUD element.
+Once connected, all variables appear in Cockpit's data-lake and can be assigned to any widget, mini-widget, or HUD overlay.
 
 ## Log Files
 
