@@ -30,7 +30,7 @@ A BlueOS extension for the Airmar 300WX WeatherStation. Connects via NMEA 0183 s
    - **Extension Identifier**: `bluerobotics.airmar-300wx`
    - **Extension Name**: `Airmar 300WX`
    - **Docker image**: `vshie/nmea-handler`
-   - **Docker tag**: `latest`
+   - **Docker tag**: `200WX`
 
 ## Custom Settings (Permissions)
 
