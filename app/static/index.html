@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, minimal-ui">
   <title>Airmar 300WX WeatherStation</title>
-  <link href="https://fonts.googleapis.com/css?family=Roboto:100,300,400,500,700,900" rel="stylesheet">
-  <link href="https://cdn.jsdelivr.net/npm/@mdi/font@latest/css/materialdesignicons.min.css" rel="stylesheet">
-  <link href="https://cdn.jsdelivr.net/npm/vuetify@2.x/dist/vuetify.min.css" rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/vue@2.x/dist/vue.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/vuetify@2.x/dist/vuetify.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <link href="/static/vendor/css/roboto.css" rel="stylesheet">
+  <link href="/static/vendor/css/materialdesignicons.min.css" rel="stylesheet">
+  <link href="/static/vendor/css/vuetify.min.css" rel="stylesheet">
+  <script src="/static/vendor/js/vue.min.js"></script>
+  <script src="/static/vendor/js/vuetify.min.js"></script>
+  <script src="/static/vendor/js/axios.min.js"></script>
   <style>
     /* Dashboard tile styles */
     .sensor-tile {
@@ -2783,9 +2783,6 @@
           });
         },
         async flushSentenceChanges() {
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/7050f155-ae55-42cf-9654-50c506ff56ff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.html:flushSentenceChanges',message:'flush start',data:{pendingCount:Object.keys(this.pendingSentenceChanges||{}).length,inProgress:this.sentenceFlushInProgress},timestamp:Date.now(),hypothesisId:'H5'})}).catch(()=>{});
-          // #endregion
           if (this.sentenceFlushInProgress) return;
           const entries = Object.entries(this.pendingSentenceChanges || {});
           if (entries.length === 0) return;
@@ -2809,9 +2806,6 @@
             this.sentenceConfigSuccess = false;
             this.pendingSentenceChanges = {};
           } finally {
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/7050f155-ae55-42cf-9654-50c506ff56ff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.html:flushSentenceChanges',message:'flush end',data:{success:this.sentenceConfigSuccess,changesCount:numChanges},timestamp:Date.now(),hypothesisId:'H5'})}).catch(()=>{});
-            // #endregion
             this.sentenceFlushInProgress = false;
           }
         },
@@ -2826,9 +2820,6 @@
           await this.applySentenceConfig(sentenceId, this.sentenceConfig[sentenceId], sec);
         },
         async toggleSentence(sentenceId, enabled) {
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/7050f155-ae55-42cf-9654-50c506ff56ff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.html:toggleSentence',message:'toggleSentence',data:{sentenceId,enabled,typeofEnabled:typeof enabled,configValue:this.sentenceConfig[sentenceId]},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
-          // #endregion
           const interval = this.getSentenceIntervalForId(sentenceId);
           this.queueSentenceChange(sentenceId, enabled, interval);
         },

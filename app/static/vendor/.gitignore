@@ -1,0 +1,6 @@
+# Vendor assets are downloaded at Docker build time.
+# Only the roboto.css (local @font-face) is committed.
+js/
+fonts/
+css/vuetify.min.css
+css/materialdesignicons.min.css

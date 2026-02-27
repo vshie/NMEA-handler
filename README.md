@@ -56,6 +56,16 @@ When manually installing, paste this into the **Custom settings** field:
 }
 ```
 
+## Network Ports
+
+| Port | Protocol | Direction | Purpose |
+|---|---|---|---|
+| **6436/tcp** | HTTP | In | Extension web UI and REST API |
+| **8765/tcp** | WebSocket | In | Cockpit data-lake (streams wind, GPS, heading variables) |
+| **27000/udp** | UDP | Out | ArduPilot autopilot (NMEA sentences — Wind Vane or GPS mode) |
+
+Ports 6436 and 8765 are exposed by the Docker container. Port 27000 is an outbound UDP destination (`host.docker.internal:27000`) used to reach the autopilot on the host.
+
 ## ArduPilot UDP Streaming
 
 The extension forwards NMEA sentences to the autopilot via UDP on port 27000. In the **Sentences** tab, choose one of two modes:
