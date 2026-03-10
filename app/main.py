@@ -238,15 +238,11 @@ class NMEAHandler:
         # Load saved state
         self.load_state()
         
-        # Restore previous connection if it exists
+        # Restore previous connection in background so the web UI is always reachable
         if self.state['port']:
-            self.app_logger.info(f"Restoring previous connection to {self.state['port']} at {self.state['baud_rate']} baud")
-            success, message = self.connect_serial(self.state['port'], self.state['baud_rate'])
-            if success:
-                self.app_logger.info("Successfully restored previous connection")
-                # Streaming is always started in connect_serial on success
-            else:
-                self.app_logger.error(f"Failed to restore previous connection: {message}")
+            self.app_logger.info(f"Will restore connection to {self.state['port']} at {self.state['baud_rate']} baud (background)")
+            t = threading.Thread(target=self._restore_connection, daemon=True, name='serial-restore')
+            t.start()
 
     def load_state(self):
         """Load saved state from file"""
@@ -275,6 +271,20 @@ class NMEAHandler:
             self.app_logger.info(f"Saved state: port={self.state['port']}, baud_rate={self.state['baud_rate']}, streaming={self.is_streaming}")
         except Exception as e:
             self.app_logger.error(f"Error saving state: {e}")
+
+    def _restore_connection(self):
+        """Background attempt to restore the previously-saved serial connection."""
+        port = self.state['port']
+        baud = self.state['baud_rate']
+        self.app_logger.info(f"Restoring previous connection to {port} at {baud} baud")
+        try:
+            success, message = self.connect_serial(port, baud)
+            if success:
+                self.app_logger.info("Successfully restored previous connection")
+            else:
+                self.app_logger.error(f"Failed to restore previous connection: {message}")
+        except Exception as e:
+            self.app_logger.error(f"Exception during connection restore: {e}")
 
     def start_reader_thread(self):
         """Start the background thread for reading serial data"""
@@ -1065,12 +1075,27 @@ class NMEAHandler:
         min_messages = 5 if baud_rate == 4800 else 1
         try:
             self.app_logger.info(f"Trying {port} at {baud_rate} baud...")
-            conn = serial.Serial(
-                port=port,
-                baudrate=baud_rate,
-                timeout=1,
-                exclusive=True
-            )
+            # Open in a sub-thread so a kernel-level hang on open() can't block forever
+            open_result = [None, None]  # [conn_or_None, exception_or_None]
+            def _open_serial():
+                try:
+                    open_result[0] = serial.Serial(
+                        port=port,
+                        baudrate=baud_rate,
+                        timeout=1,
+                        exclusive=True
+                    )
+                except Exception as e:
+                    open_result[1] = e
+            opener = threading.Thread(target=_open_serial, daemon=True)
+            opener.start()
+            opener.join(timeout=5)
+            if opener.is_alive():
+                self.app_logger.error(f"serial.Serial() hung for 5 s opening {port} at {baud_rate} — skipping")
+                return False, None
+            if open_result[1] is not None:
+                raise open_result[1]
+            conn = open_result[0]
             # Start periodic messages before checking for data (device may have been stopped)
             conn.write(b'$PAMTX,1\r\n')
             time.sleep(0.3)
