@@ -1074,8 +1074,7 @@ class NMEAHandler:
                     open_result[0] = serial.Serial(
                         port=port,
                         baudrate=baud_rate,
-                        timeout=1,
-                        exclusive=True
+                        timeout=1
                     )
                 except Exception as e:
                     open_result[1] = e
@@ -1088,13 +1087,6 @@ class NMEAHandler:
             if open_result[1] is not None:
                 raise open_result[1]
             conn = open_result[0]
-            # Cycle DTR so the USB-serial adapter and device see a fresh
-            # low→high transition — without this the Airmar may stay silent
-            # until the port is externally toggled (e.g. via `screen`).
-            conn.dtr = False
-            time.sleep(0.1)
-            conn.dtr = True
-            time.sleep(0.2)
             conn.reset_input_buffer()
             conn.write(b'$PAMTX,1\r\n')
             time.sleep(0.3)
@@ -1165,8 +1157,7 @@ class NMEAHandler:
             self.serial_connection = serial.Serial(
                 port=port,
                 baudrate=38400,
-                timeout=1,
-                exclusive=True
+                timeout=1
             )
             self.state['baud_rate'] = 38400
             time.sleep(0.2)
@@ -1713,8 +1704,7 @@ class NMEAHandler:
             self.serial_connection = serial.Serial(
                 port=self.state['port'],
                 baudrate=new_baud_rate,
-                timeout=1,
-                exclusive=True
+                timeout=1
             )
             time.sleep(0.5)  # Wait for connection to stabilize
 
