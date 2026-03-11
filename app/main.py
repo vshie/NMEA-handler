@@ -117,7 +117,8 @@ class NMEAHandler:
         self.connection_status = self.CONN_STATUS_DISCONNECTED
         self.connection_message = ''
         self.connection_step_since = None  # epoch when current status phase began
-        self.detected_baud = None  # Baud rate at which device was initially detected
+        self.detected_baud = None
+        self._cancel_connect = False  # flag checked by connect loops
         
         self.state = {
             'port': None,
@@ -280,6 +281,7 @@ class NMEAHandler:
 
     def _auto_connect(self):
         """Background auto-connect: try saved port first, then scan others."""
+        self._cancel_connect = False
         saved_port = self.state.get('port')
         saved_baud = self.state.get('baud_rate', 4800)
 
@@ -289,7 +291,8 @@ class NMEAHandler:
                                   f'Trying saved port {saved_port}...')
             self.app_logger.info(f"Auto-connect: trying saved port {saved_port}")
             try:
-                success, msg = self.connect_serial(saved_port, saved_baud)
+                success, msg = self.connect_serial(saved_port, saved_baud,
+                                                   max_attempts=2)
                 if success:
                     self.app_logger.info(f"Auto-connect: restored {saved_port}")
                     return
@@ -308,10 +311,13 @@ class NMEAHandler:
 
         self.app_logger.info(f"Auto-connect: scanning {len(other_ports)} other port(s)")
         for i, port in enumerate(other_ports, 1):
+            if self._cancel_connect:
+                self._set_conn_status(self.CONN_STATUS_DISCONNECTED, 'Cancelled')
+                return
             self._set_conn_status(self.CONN_STATUS_AUTO_SCANNING,
                                   f'Scanning port {port} ({i}/{len(other_ports)})...')
             try:
-                success, msg = self.connect_serial(port, 4800)
+                success, msg = self.connect_serial(port, 4800, max_attempts=2)
                 if success:
                     self.app_logger.info(f"Auto-connect: connected on {port}")
                     return
@@ -1092,6 +1098,25 @@ class NMEAHandler:
             self.app_logger.error(f"Error parsing USB port from {path_name}: {e}")
             return {'position': 'unknown', 'label': 'Unknown', 'type': 'unknown', 'bus': ''}
 
+    def _safe_serial_open(self, port, baud_rate, open_timeout=5):
+        """Open a serial port with a timeout guard against kernel-level hangs.
+        Returns a serial.Serial connection or raises on failure."""
+        result = [None, None]
+        def _open():
+            try:
+                result[0] = serial.Serial(port=port, baudrate=baud_rate, timeout=1)
+            except Exception as e:
+                result[1] = e
+        t = threading.Thread(target=_open, daemon=True)
+        t.start()
+        t.join(timeout=open_timeout)
+        if t.is_alive():
+            raise serial.SerialException(
+                f"serial open hung for {open_timeout}s on {port} at {baud_rate}")
+        if result[1] is not None:
+            raise result[1]
+        return result[0]
+
     def _try_baud_rate(self, port, baud_rate, timeout=3):
         """
         Try to connect at a specific baud rate and wait for valid NMEA data.
@@ -1103,26 +1128,7 @@ class NMEAHandler:
         min_messages = 5 if baud_rate == 4800 else 1
         try:
             self.app_logger.debug(f"Trying {port} at {baud_rate} baud...")
-            # Open in a sub-thread so a kernel-level hang on open() can't block forever
-            open_result = [None, None]  # [conn_or_None, exception_or_None]
-            def _open_serial():
-                try:
-                    open_result[0] = serial.Serial(
-                        port=port,
-                        baudrate=baud_rate,
-                        timeout=1
-                    )
-                except Exception as e:
-                    open_result[1] = e
-            opener = threading.Thread(target=_open_serial, daemon=True)
-            opener.start()
-            opener.join(timeout=5)
-            if opener.is_alive():
-                self.app_logger.error(f"serial.Serial() hung for 5 s opening {port} at {baud_rate} — skipping")
-                return False, None
-            if open_result[1] is not None:
-                raise open_result[1]
-            conn = open_result[0]
+            conn = self._safe_serial_open(port, baud_rate)
             conn.reset_input_buffer()
             conn.write(b'$PAMTX,1\r\n')
             time.sleep(0.3)
@@ -1141,11 +1147,10 @@ class NMEAHandler:
                 except Exception as e:
                     self.app_logger.error(f"Error reading at {baud_rate} baud: {e}")
                 time.sleep(0.1)
-            
-            # Not enough valid data received, close connection
+
             conn.close()
             return False, None
-            
+
         except Exception as e:
             self.app_logger.error(f"Failed to open port at {baud_rate} baud: {e}")
             return False, None
@@ -1160,7 +1165,7 @@ class NMEAHandler:
         """
         try:
             self._set_conn_status(self.CONN_STATUS_SWITCHING_BAUD,
-                'Switching to 38400 baud...')
+                f'{port} — switching to 38400 baud')
 
             # Per WX Series manual: suspend transmission first, then change baud, then resume at new baud.
 
@@ -1188,11 +1193,7 @@ class NMEAHandler:
             self.serial_connection.close()
             time.sleep(0.3)
             self.app_logger.debug("Reopening at 38400 baud")
-            self.serial_connection = serial.Serial(
-                port=port,
-                baudrate=38400,
-                timeout=1
-            )
+            self.serial_connection = self._safe_serial_open(port, 38400)
             self.state['baud_rate'] = 38400
             time.sleep(0.2)
 
@@ -1224,8 +1225,9 @@ class NMEAHandler:
         Returns (success, message)
         """
         try:
+            port_label = self.serial_connection.port if self.serial_connection else '?'
             self._set_conn_status(self.CONN_STATUS_ENABLING_SENTENCES,
-                                  'Enabling required NMEA sentences...')
+                                  f'{port_label} — enabling NMEA sentences')
             
             if not self.serial_connection or not self.serial_connection.is_open:
                 return False, "Not connected"
@@ -1494,20 +1496,16 @@ class NMEAHandler:
         sentences.sort(key=lambda x: x['id'])
         return sentences
 
-    def connect_serial(self, port, baud_rate=None, stay_at_4800=False):
+    def connect_serial(self, port, baud_rate=None, stay_at_4800=False,
+                        max_attempts=6):
         """
         Connect to serial port with automatic baud rate negotiation.
-        
+
         Args:
             port: Serial port path
-            baud_rate: Hint for which baud to try first (saved state); does NOT control stay_at_4800
-            stay_at_4800: If True, never switch to 38400 (only set from explicit user checkbox)
-        
-        Connection sequence (unless stay_at_4800):
-        1. Try 4800 baud - if successful, switch to 38400 per manual sequence
-        2. If 4800 fails, try 38400 baud (device may already be configured)
-        3. Toggle between baud rates until successful or max retries
-        4. Once at target baud, enable required sentences
+            baud_rate: Hint for which baud to try first (saved state)
+            stay_at_4800: If True, never switch to 38400
+            max_attempts: Total attempts across all baud rates (default 6 = 3 per baud)
         """
         try:
             # Clean up any existing connection
@@ -1515,14 +1513,12 @@ class NMEAHandler:
                 self.stop_reader_thread()
                 self.serial_connection.close()
                 self.serial_connection = None
-            
-            # Verify port exists
+
             if not Path(port).exists():
                 self._set_conn_status(self.CONN_STATUS_FAILED, f"Port {port} does not exist")
                 return False, self.connection_message
-            
+
             self.detected_baud = None
-            max_attempts = 6  # 3 attempts at each baud rate
             if stay_at_4800:
                 baud_rates = [4800]
             elif baud_rate == 38400:
@@ -1533,13 +1529,17 @@ class NMEAHandler:
             # Try to establish connection
             n_bauds = len(baud_rates)
             for attempt in range(max_attempts):
+                if self._cancel_connect:
+                    self._set_conn_status(self.CONN_STATUS_DISCONNECTED, 'Cancelled')
+                    return False, 'Cancelled'
+
                 current_baud = baud_rates[attempt % n_bauds]
                 attempt_num = attempt // n_bauds + 1
                 max_per_baud = max_attempts // n_bauds
-                
+
                 status = self.CONN_STATUS_TRYING_4800 if current_baud == 4800 else self.CONN_STATUS_TRYING_38400
-                self._set_conn_status(status, f'Trying {current_baud} baud (attempt {attempt_num}/{max_per_baud})...')
-                
+                self._set_conn_status(status, f'{port} — {current_baud} baud (attempt {attempt_num}/{max_per_baud})')
+
                 self.app_logger.debug(self.connection_message)
 
                 success, conn = self._try_baud_rate(port, current_baud, timeout=3)
@@ -1734,11 +1734,7 @@ class NMEAHandler:
 
             # Step 4: Reopen at new baud rate
             self.app_logger.debug(f"Reopening at {new_baud_rate} baud")
-            self.serial_connection = serial.Serial(
-                port=self.state['port'],
-                baudrate=new_baud_rate,
-                timeout=1
-            )
+            self.serial_connection = self._safe_serial_open(self.state['port'], new_baud_rate)
             time.sleep(0.5)  # Wait for connection to stabilize
 
             # Step 5: Re-enable periodic sentences
@@ -1877,6 +1873,14 @@ def select_port():
     stay_at_4800 = bool(data.get('stay_at_4800', False))
     success, message = nmea_handler.connect_serial(data['port'], baud_rate, stay_at_4800=stay_at_4800)
     return jsonify({"success": success, "message": message})
+
+@app.route('/api/serial/cancel', methods=['POST'])
+def cancel_connect():
+    """Cancel any in-progress connection attempt"""
+    nmea_handler._cancel_connect = True
+    nmea_handler._set_conn_status(
+        nmea_handler.CONN_STATUS_DISCONNECTED, 'Cancelling...')
+    return jsonify({"success": True})
 
 @app.route('/api/serial/disconnect', methods=['POST'])
 def disconnect_port():

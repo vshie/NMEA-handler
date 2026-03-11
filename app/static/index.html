@@ -337,14 +337,14 @@
                     label="Serial Port"
                     outlined
                     dense
-                    :disabled="isConnecting || connectionInfo.connected"
+                    :disabled="connectionInfo.connected"
                   ></v-select>
                 </v-col>
                 <v-col cols="12" sm="6">
                   <v-btn
                     icon
                     @click="fetchPorts(); fetchDeviceIds()"
-                    :disabled="isConnecting || connectionInfo.connected"
+                    :disabled="connectionInfo.connected"
                     title="Refresh ports"
                   >
                     <v-icon>mdi-refresh</v-icon>
@@ -2491,8 +2491,8 @@
             this.connectionPollInterval = null;
           }
         },
-        cancelConnection() {
-          // TODO: Implement actual cancellation on backend
+        async cancelConnection() {
+          try { await axios.post('/api/serial/cancel'); } catch (e) { /* best-effort */ }
           this.stopConnectionStatusPolling();
           this.isConnecting = false;
           this.connectionInfo.status = 'disconnected';
