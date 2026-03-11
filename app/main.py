@@ -63,6 +63,7 @@ class NMEAHandler:
     
     # Connection status phases
     CONN_STATUS_DISCONNECTED = 'disconnected'
+    CONN_STATUS_AUTO_SCANNING = 'auto_scanning'
     CONN_STATUS_TRYING_4800 = 'trying_4800'
     CONN_STATUS_TRYING_38400 = 'trying_38400'
     CONN_STATUS_SWITCHING_BAUD = 'switching_baud'
@@ -115,6 +116,7 @@ class NMEAHandler:
         # Connection status tracking
         self.connection_status = self.CONN_STATUS_DISCONNECTED
         self.connection_message = ''
+        self.connection_step_since = None  # epoch when current status phase began
         self.detected_baud = None  # Baud rate at which device was initially detected
         
         self.state = {
@@ -238,11 +240,9 @@ class NMEAHandler:
         # Load saved state
         self.load_state()
         
-        # Restore previous connection in background so the web UI is always reachable
-        if self.state['port']:
-            self.app_logger.debug(f"Will restore connection to {self.state['port']} in background")
-            t = threading.Thread(target=self._restore_connection, daemon=True, name='serial-restore')
-            t.start()
+        # Auto-connect in background so the web UI is always reachable
+        t = threading.Thread(target=self._auto_connect, daemon=True, name='serial-auto')
+        t.start()
 
     def load_state(self):
         """Load saved state from file"""
@@ -272,19 +272,55 @@ class NMEAHandler:
         except Exception as e:
             self.app_logger.error(f"Error saving state: {e}")
 
-    def _restore_connection(self):
-        """Background attempt to restore the previously-saved serial connection."""
-        port = self.state['port']
-        baud = self.state['baud_rate']
-        self.app_logger.debug(f"Restoring connection to {port} at {baud} baud")
-        try:
-            success, message = self.connect_serial(port, baud)
-            if success:
-                self.app_logger.info("Successfully restored previous connection")
-            else:
-                self.app_logger.error(f"Failed to restore previous connection: {message}")
-        except Exception as e:
-            self.app_logger.error(f"Exception during connection restore: {e}")
+    def _set_conn_status(self, status, message=''):
+        """Update connection status with timestamp."""
+        self.connection_status = status
+        self.connection_message = message
+        self.connection_step_since = time.time()
+
+    def _auto_connect(self):
+        """Background auto-connect: try saved port first, then scan others."""
+        saved_port = self.state.get('port')
+        saved_baud = self.state.get('baud_rate', 4800)
+
+        # Try the saved port first (most likely to succeed)
+        if saved_port and Path(saved_port).exists():
+            self._set_conn_status(self.CONN_STATUS_AUTO_SCANNING,
+                                  f'Trying saved port {saved_port}...')
+            self.app_logger.info(f"Auto-connect: trying saved port {saved_port}")
+            try:
+                success, msg = self.connect_serial(saved_port, saved_baud)
+                if success:
+                    self.app_logger.info(f"Auto-connect: restored {saved_port}")
+                    return
+            except Exception as e:
+                self.app_logger.error(f"Auto-connect: saved port failed: {e}")
+
+        # Saved port failed or missing — try every other available port once
+        all_ports = self.get_ports()
+        other_ports = [p for p in all_ports if p != saved_port]
+        if not other_ports:
+            if not saved_port or not Path(saved_port).exists():
+                self._set_conn_status(self.CONN_STATUS_FAILED,
+                                      'No serial ports found')
+                self.app_logger.error("Auto-connect: no serial ports found")
+            return
+
+        self.app_logger.info(f"Auto-connect: scanning {len(other_ports)} other port(s)")
+        for i, port in enumerate(other_ports, 1):
+            self._set_conn_status(self.CONN_STATUS_AUTO_SCANNING,
+                                  f'Scanning port {port} ({i}/{len(other_ports)})...')
+            try:
+                success, msg = self.connect_serial(port, 4800)
+                if success:
+                    self.app_logger.info(f"Auto-connect: connected on {port}")
+                    return
+            except Exception as e:
+                self.app_logger.debug(f"Auto-connect: {port} failed: {e}")
+
+        self._set_conn_status(self.CONN_STATUS_FAILED,
+                              'No device responded on any port')
+        self.app_logger.error("Auto-connect: no device responded on any port")
 
     def start_reader_thread(self):
         """Start the background thread for reading serial data"""
@@ -1123,10 +1159,8 @@ class NMEAHandler:
         Returns (success, message)
         """
         try:
-            self.connection_status = self.CONN_STATUS_SWITCHING_BAUD
-            self.connection_message = (
-                'Per manual: suspending transmission ($PAMTX), changing baud to 38400, then resuming ($PAMTX,1)...'
-            )
+            self._set_conn_status(self.CONN_STATUS_SWITCHING_BAUD,
+                'Switching to 38400 baud...')
 
             # Per WX Series manual: suspend transmission first, then change baud, then resume at new baud.
 
@@ -1190,8 +1224,8 @@ class NMEAHandler:
         Returns (success, message)
         """
         try:
-            self.connection_status = self.CONN_STATUS_ENABLING_SENTENCES
-            self.connection_message = 'Enabling required NMEA sentences...'
+            self._set_conn_status(self.CONN_STATUS_ENABLING_SENTENCES,
+                                  'Enabling required NMEA sentences...')
             
             if not self.serial_connection or not self.serial_connection.is_open:
                 return False, "Not connected"
@@ -1484,8 +1518,7 @@ class NMEAHandler:
             
             # Verify port exists
             if not Path(port).exists():
-                self.connection_status = self.CONN_STATUS_FAILED
-                self.connection_message = f"Port {port} does not exist"
+                self._set_conn_status(self.CONN_STATUS_FAILED, f"Port {port} does not exist")
                 return False, self.connection_message
             
             self.detected_baud = None
@@ -1504,11 +1537,8 @@ class NMEAHandler:
                 attempt_num = attempt // n_bauds + 1
                 max_per_baud = max_attempts // n_bauds
                 
-                if current_baud == 4800:
-                    self.connection_status = self.CONN_STATUS_TRYING_4800
-                else:
-                    self.connection_status = self.CONN_STATUS_TRYING_38400
-                self.connection_message = f'Trying {current_baud} baud (attempt {attempt_num}/{max_per_baud})...'
+                status = self.CONN_STATUS_TRYING_4800 if current_baud == 4800 else self.CONN_STATUS_TRYING_38400
+                self._set_conn_status(status, f'Trying {current_baud} baud (attempt {attempt_num}/{max_per_baud})...')
                 
                 self.app_logger.debug(self.connection_message)
 
@@ -1564,14 +1594,14 @@ class NMEAHandler:
                     self.save_state()
                     self.connected_since = time.time()
                     
-                    self.connection_status = self.CONN_STATUS_CONNECTED
                     if final_baud == 4800:
                         detected_msg = " (4800 only, no switch)"
                     elif self.detected_baud == 38400:
                         detected_msg = " (detected at 38400)"
                     else:
                         detected_msg = " (switched from 4800)"
-                    self.connection_message = f"Connected to {port} at {final_baud} baud{detected_msg}"
+                    self._set_conn_status(self.CONN_STATUS_CONNECTED,
+                                          f"Connected to {port} at {final_baud} baud{detected_msg}")
                     self.app_logger.info(self.connection_message)
                     self._sse_broadcast('connection', self.get_connection_info())
                     
@@ -1581,14 +1611,13 @@ class NMEAHandler:
                     return True, self.connection_message
             
             # All attempts failed
-            self.connection_status = self.CONN_STATUS_FAILED
-            self.connection_message = "Could not establish connection after multiple attempts"
+            self._set_conn_status(self.CONN_STATUS_FAILED,
+                                  "Could not establish connection after multiple attempts")
             self.app_logger.error(self.connection_message)
             return False, self.connection_message
-            
+
         except Exception as e:
-            self.connection_status = self.CONN_STATUS_FAILED
-            self.connection_message = str(e)
+            self._set_conn_status(self.CONN_STATUS_FAILED, str(e))
             self.app_logger.error(f"Error in connect_serial: {e}")
             return False, self.connection_message
 
@@ -1616,8 +1645,7 @@ class NMEAHandler:
             self.connected_since = None
             self.messages_received = 0
             self.detected_baud = None
-            self.connection_status = self.CONN_STATUS_DISCONNECTED
-            self.connection_message = ''
+            self._set_conn_status(self.CONN_STATUS_DISCONNECTED, '')
             self.save_state()
             self._sse_broadcast('connection', self.get_connection_info())
             
@@ -1631,10 +1659,15 @@ class NMEAHandler:
         is_connected = (self.serial_connection is not None and 
                        self.serial_connection.is_open)
         
+        step_elapsed = None
+        if self.connection_step_since is not None:
+            step_elapsed = round(time.time() - self.connection_step_since, 1)
+
         return {
             'connected': is_connected,
             'status': self.connection_status,
             'message': self.connection_message,
+            'step_elapsed': step_elapsed,
             'port': self.serial_connection.port if is_connected else None,
             'baud_rate': self.serial_connection.baudrate if is_connected else 0,
             'detected_baud': self.detected_baud,

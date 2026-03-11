@@ -425,7 +425,7 @@
               <!-- Connection Status -->
               <v-row>
                 <v-col cols="12">
-                  <!-- Connecting Progress -->
+                  <!-- Connecting / Auto-scanning Progress -->
                   <v-alert
                     v-if="isConnecting"
                     type="info"
@@ -441,7 +441,12 @@
                       ></v-progress-circular>
                       <div>
                         <strong>{{ connectionStatusText }}</strong>
-                        <div class="text-caption">{{ connectionInfo.message }}</div>
+                        <div class="text-caption">
+                          {{ connectionInfo.message }}
+                          <span v-if="connectionInfo.step_elapsed != null">
+                            &mdash; {{ Math.round(connectionInfo.step_elapsed) }}s
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </v-alert>
@@ -1706,6 +1711,7 @@
         connectionStatusText() {
           const statusMap = {
             'disconnected': 'Disconnected',
+            'auto_scanning': 'Auto-connecting...',
             'trying_4800': 'Trying 4800 baud...',
             'trying_38400': 'Trying 38400 baud...',
             'switching_baud': 'Switching to 38400 baud...',
@@ -2410,9 +2416,15 @@
             this.connectionInfo = response.data;
             
             // Update isConnecting based on status
-            const connectingStatuses = ['trying_4800', 'trying_38400', 'switching_baud', 'enabling_sentences'];
+            const connectingStatuses = ['auto_scanning', 'trying_4800', 'trying_38400', 'switching_baud', 'enabling_sentences'];
+            const wasConnecting = this.isConnecting;
             this.isConnecting = connectingStatuses.includes(this.connectionInfo.status);
-            
+
+            // Auto-stop connection polling once we leave a connecting state
+            if (wasConnecting && !this.isConnecting) {
+              this.stopConnectionStatusPolling();
+            }
+
             // Sync connected port into the dropdown so it shows during auto-connect
             if (this.connectionInfo.connected && this.connectionInfo.port) {
               if (!this.availablePorts.includes(this.connectionInfo.port)) {
@@ -2885,7 +2897,11 @@
         
         this.fetchPorts();
         this.fetchDeviceIds();
-        this.fetchConnectionStatus();
+        this.fetchConnectionStatus().then(() => {
+          if (this.isConnecting) {
+            this.startConnectionStatusPolling();
+          }
+        });
         this.fetchSerialInfo();
         this.checkStreamingStatus();
         this.fetchSentences();
