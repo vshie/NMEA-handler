@@ -315,13 +315,54 @@
     .log-line:last-child {
       border-bottom: none;
     }
+    .app-layout-row {
+      align-items: flex-start;
+    }
+    .app-sidebar-col {
+      flex: 0 0 auto;
+    }
+    .app-sidebar-image-wrap {
+      max-width: 220px;
+    }
+    @media (min-width: 960px) {
+      .app-sidebar-image-wrap {
+        position: sticky;
+        top: 16px;
+      }
+    }
+    .app-main-col {
+      min-width: 0;
+    }
+    .wind-viz-card {
+      background: #fafafa;
+    }
+    .wind-rose-svg text {
+      font-size: 9px;
+      fill: #666;
+    }
+    .heatmap-wrap {
+      overflow-x: auto;
+    }
   </style>
 </head>
 <body>
   <div id="app">
     <v-app>
       <v-main>
-        <v-container>
+        <v-container fluid>
+          <v-row align="start" class="app-layout-row">
+            <v-col cols="12" md="auto" class="app-sidebar-col pb-2 pb-md-0">
+              <div class="app-sidebar-image-wrap text-center text-md-left mx-auto mx-md-0">
+                <v-img
+                  src="/static/images/airmar-300wx.png"
+                  alt="Airmar 300WX WeatherStation"
+                  contain
+                  max-width="220"
+                  class="app-sidebar-image"
+                ></v-img>
+              </div>
+            </v-col>
+            <v-col cols="12" md class="app-main-col">
           <!-- Connection Settings -->
           <v-card class="mb-4">
             <v-card-title>
@@ -955,6 +996,150 @@
                       <span v-if="streamingStatus.serial_health.last_unmapped_type"> (last: <code>{{ streamingStatus.serial_health.last_unmapped_type }}</code>)</span>
                     </div>
                   </div>
+
+                  <!-- Wind roses & heatmaps (paired MWV-R / MWV-T / MWD history) -->
+                  <div v-if="connectionInfo.connected" class="mb-4">
+                    <v-row v-if="windRoseChartApparent || windRoseChartTrue">
+                      <v-col v-if="windRoseChartApparent" cols="12" :md="windRoseMd">
+                        <v-card outlined class="wind-viz-card">
+                          <v-card-title class="text-subtitle-2 py-2">Apparent wind rose (relative to bow)</v-card-title>
+                          <v-card-subtitle class="text-caption pb-0 pt-0 px-4 grey--text">
+                            MWV/WIMWV <strong>R</strong>: 0° = bow. N/E/S/W are bow-relative labels. Sector radius ∝ sum of speeds in that direction.
+                          </v-card-subtitle>
+                          <v-card-text>
+                            <div class="text-center">
+                              <svg class="wind-rose-svg" viewBox="0 0 200 200" width="220" height="220">
+                                <circle cx="100" cy="100" r="88" fill="none" stroke="rgba(128,128,128,0.35)" />
+                                <g v-for="(sec, i) in windRoseChartApparent.sectors" :key="'rose-a-' + i">
+                                  <path :d="sec.d" :fill="sec.fill" stroke="rgba(0,0,0,0.1)" stroke-width="0.4" />
+                                </g>
+                                <text x="100" y="16" text-anchor="middle">N</text>
+                                <text x="186" y="104" text-anchor="middle">E</text>
+                                <text x="100" y="194" text-anchor="middle">S</text>
+                                <text x="14" y="104" text-anchor="middle">W</text>
+                              </svg>
+                            </div>
+                          </v-card-text>
+                        </v-card>
+                      </v-col>
+                      <v-col v-if="windRoseChartTrue" cols="12" :md="windRoseMd">
+                        <v-card outlined class="wind-viz-card">
+                          <v-card-title class="text-subtitle-2 py-2">True wind rose (north‑referenced)</v-card-title>
+                          <v-card-subtitle class="text-caption pb-0 pt-0 px-4 grey--text">
+                            From MWV/WIMWV <strong>T</strong> and/or MWD/WIMWD: direction is where the wind comes <em>from</em> (meteorological). N/E/S/W = geographic.
+                          </v-card-subtitle>
+                          <v-card-text>
+                            <div class="text-center">
+                              <svg class="wind-rose-svg" viewBox="0 0 200 200" width="220" height="220">
+                                <circle cx="100" cy="100" r="88" fill="none" stroke="rgba(128,128,128,0.35)" />
+                                <g v-for="(sec, i) in windRoseChartTrue.sectors" :key="'rose-t-' + i">
+                                  <path :d="sec.d" :fill="sec.fill" stroke="rgba(0,0,0,0.1)" stroke-width="0.4" />
+                                </g>
+                                <text x="100" y="16" text-anchor="middle">N</text>
+                                <text x="186" y="104" text-anchor="middle">E</text>
+                                <text x="100" y="194" text-anchor="middle">S</text>
+                                <text x="14" y="104" text-anchor="middle">W</text>
+                              </svg>
+                            </div>
+                          </v-card-text>
+                        </v-card>
+                      </v-col>
+                    </v-row>
+                    <v-alert v-else type="info" dense class="mb-4">
+                      No paired wind samples in the last 15 min yet (need valid MWV relative and/or true, or MWD with direction and speed).
+                    </v-alert>
+                    <v-row v-if="windHeatmapChartApparent || windHeatmapChartTrue">
+                      <v-col v-if="windHeatmapChartApparent" cols="12" :md="windHeatmapMd">
+                        <v-card outlined class="wind-viz-card">
+                          <v-card-title class="text-subtitle-2 py-2">Apparent wind speed vs time (last 15 min)</v-card-title>
+                          <v-card-subtitle class="text-caption pb-0 pt-0 px-4 grey--text">
+                            Resolution depends on sentence rate. Rows: 2 kt bins; time older (left) → newer (right).
+                          </v-card-subtitle>
+                          <v-card-text>
+                            <div class="heatmap-wrap">
+                              <svg
+                                class="wind-heatmap-svg"
+                                :viewBox="'0 0 ' + (windHeatmapChartApparent.plotW + 40) + ' ' + (windHeatmapChartApparent.plotH + 28)"
+                                :width="Math.min(420, windHeatmapChartApparent.plotW + 40)"
+                                :height="windHeatmapChartApparent.plotH + 28"
+                              >
+                                <g transform="translate(36, 6)">
+                                  <rect
+                                    v-for="(c, i) in windHeatmapChartApparent.cells"
+                                    :key="'hm-a-' + i"
+                                    :x="c.x"
+                                    :y="c.y"
+                                    :width="c.w"
+                                    :height="c.h"
+                                    :fill="c.fill"
+                                    stroke="rgba(0,0,0,0.05)"
+                                    stroke-width="0.3"
+                                  />
+                                </g>
+                                <text
+                                  v-for="(lbl, yi) in windHeatmapChartApparent.yLabels"
+                                  :key="'yl-a-' + yi"
+                                  x="2"
+                                  :y="6 + (yi + 0.55) * windHeatmapChartApparent.cellH"
+                                  font-size="8"
+                                  fill="#757575"
+                                >{{ lbl }}</text>
+                                <text :x="36 + windHeatmapChartApparent.plotW / 2" :y="windHeatmapChartApparent.plotH + 22" text-anchor="middle" font-size="9" fill="#757575">older ← · → newer</text>
+                              </svg>
+                              <div class="text-caption grey--text mt-1">Darker = more samples (max {{ windHeatmapChartApparent.maxCount }}).</div>
+                            </div>
+                          </v-card-text>
+                        </v-card>
+                      </v-col>
+                      <v-col v-if="windHeatmapChartTrue" cols="12" :md="windHeatmapMd">
+                        <v-card outlined class="wind-viz-card">
+                          <v-card-title class="text-subtitle-2 py-2">True wind speed vs time (last 15 min)</v-card-title>
+                          <v-card-subtitle class="text-caption pb-0 pt-0 px-4 grey--text">
+                            Same layout as apparent; data from MWV <strong>T</strong> and/or MWD when speed and direction are both present.
+                          </v-card-subtitle>
+                          <v-card-text>
+                            <div class="heatmap-wrap">
+                              <svg
+                                class="wind-heatmap-svg"
+                                :viewBox="'0 0 ' + (windHeatmapChartTrue.plotW + 40) + ' ' + (windHeatmapChartTrue.plotH + 28)"
+                                :width="Math.min(420, windHeatmapChartTrue.plotW + 40)"
+                                :height="windHeatmapChartTrue.plotH + 28"
+                              >
+                                <g transform="translate(36, 6)">
+                                  <rect
+                                    v-for="(c, i) in windHeatmapChartTrue.cells"
+                                    :key="'hm-t-' + i"
+                                    :x="c.x"
+                                    :y="c.y"
+                                    :width="c.w"
+                                    :height="c.h"
+                                    :fill="c.fill"
+                                    stroke="rgba(0,0,0,0.05)"
+                                    stroke-width="0.3"
+                                  />
+                                </g>
+                                <text
+                                  v-for="(lbl, yi) in windHeatmapChartTrue.yLabels"
+                                  :key="'yl-t-' + yi"
+                                  x="2"
+                                  :y="6 + (yi + 0.55) * windHeatmapChartTrue.cellH"
+                                  font-size="8"
+                                  fill="#757575"
+                                >{{ lbl }}</text>
+                                <text :x="36 + windHeatmapChartTrue.plotW / 2" :y="windHeatmapChartTrue.plotH + 22" text-anchor="middle" font-size="9" fill="#757575">older ← · → newer</text>
+                              </svg>
+                              <div class="text-caption grey--text mt-1">Darker = more samples (max {{ windHeatmapChartTrue.maxCount }}).</div>
+                            </div>
+                          </v-card-text>
+                        </v-card>
+                      </v-col>
+                    </v-row>
+                    <p class="text-caption grey--text mb-0 mt-2">
+                      Inspired by
+                      <a href="https://medium.com/@jaxzin/how-i-turned-a-cheap-weather-station-into-a-personal-devops-dashboard-5c8820790fd5" target="_blank" rel="noopener noreferrer">Brian Jackson’s Grafana-oriented weather dashboard article</a>
+                      — similar views implemented here locally.
+                    </p>
+                  </div>
                   
                   <!-- Wind Section -->
                   <div
@@ -1583,6 +1768,8 @@
               </v-tab-item>
             </v-tabs-items>
           </v-card>
+            </v-col>
+          </v-row>
         </v-container>
       </v-main>
     </v-app>
@@ -1818,6 +2005,34 @@
           if (this.bandwidthPercent > 95) return 'red';
           if (this.bandwidthPercent > 75) return 'orange';
           return 'green';
+        },
+        windApparentPairedSamples() {
+          return Array.isArray(this.sensorHistory.wind_apparent_paired)
+            ? this.sensorHistory.wind_apparent_paired
+            : [];
+        },
+        windTruePairedSamples() {
+          return Array.isArray(this.sensorHistory.wind_true_paired)
+            ? this.sensorHistory.wind_true_paired
+            : [];
+        },
+        windRoseChartApparent() {
+          return this.buildWindRoseChart(this.windApparentPairedSamples, 200);
+        },
+        windRoseChartTrue() {
+          return this.buildWindRoseChart(this.windTruePairedSamples, 285);
+        },
+        windHeatmapChartApparent() {
+          return this.buildWindHeatmapChart(this.windApparentPairedSamples, 215, 75);
+        },
+        windHeatmapChartTrue() {
+          return this.buildWindHeatmapChart(this.windTruePairedSamples, 285, 70);
+        },
+        windRoseMd() {
+          return this.windRoseChartApparent && this.windRoseChartTrue ? 6 : 12;
+        },
+        windHeatmapMd() {
+          return this.windHeatmapChartApparent && this.windHeatmapChartTrue ? 6 : 12;
         }
       },
       watch: {
@@ -1840,6 +2055,113 @@
         }
       },
       methods: {
+        buildWindRoseChart(samples, hue) {
+          if (!samples || !samples.length) return null;
+          const N = 16;
+          const sums = Array(N).fill(0);
+          for (let i = 0; i < samples.length; i++) {
+            const s = samples[i];
+            let a = Number(s.angle);
+            if (!isFinite(a)) continue;
+            a = ((a % 360) + 360) % 360;
+            let idx = Math.floor(a / 22.5);
+            if (idx >= N) idx = N - 1;
+            sums[idx] += Number(s.speed) || 0;
+          }
+          const max = Math.max.apply(null, sums.concat([1e-6]));
+          const cx = 100;
+          const cy = 100;
+          const rMax = 82;
+          const sectors = [];
+          for (let i = 0; i < N; i++) {
+            const t = sums[i] / max;
+            const r = rMax * Math.sqrt(t);
+            const d0 = (i * 22.5 * Math.PI) / 180;
+            const d1 = ((i + 1) * 22.5 * Math.PI) / 180;
+            const x0 = cx + r * Math.sin(d0);
+            const y0 = cy - r * Math.cos(d0);
+            const x1 = cx + r * Math.sin(d1);
+            const y1 = cy - r * Math.cos(d1);
+            const L = Math.round(36 + 38 * t);
+            const fill = 'hsl(' + hue + ', 70%, ' + L + '%)';
+            sectors.push({
+              d: 'M ' + cx + ' ' + cy + ' L ' + x0.toFixed(2) + ' ' + y0.toFixed(2) + ' A ' + r.toFixed(2) + ' ' + r.toFixed(2) + ' 0 0 1 ' + x1.toFixed(2) + ' ' + y1.toFixed(2) + ' Z',
+              sum: sums[i],
+              fill: fill
+            });
+          }
+          return { sectors: sectors, maxSum: max };
+        },
+        buildWindHeatmapChart(samples, hue, sat) {
+          if (!samples || !samples.length) return null;
+          sat = sat == null ? 75 : sat;
+          const TIME_SEC = 900;
+          const timeBins = 48;
+          const bucketT = TIME_SEC / timeBins;
+          const speedBinKts = 2;
+          let maxS = 0;
+          for (let i = 0; i < samples.length; i++) {
+            const sp = Number(samples[i].speed);
+            if (isFinite(sp)) maxS = Math.max(maxS, sp);
+          }
+          const numSpeedBins = Math.min(24, Math.max(6, Math.ceil(maxS / speedBinKts) + 1));
+          const grid = [];
+          for (let r = 0; r < numSpeedBins; r++) {
+            grid.push(Array(timeBins).fill(0));
+          }
+          for (let i = 0; i < samples.length; i++) {
+            const s = samples[i];
+            const t = Number(s.t);
+            const sp = Number(s.speed);
+            if (!isFinite(t) || !isFinite(sp) || t < 0 || t > TIME_SEC) continue;
+            const tx = Math.min(timeBins - 1, Math.max(0, Math.floor((TIME_SEC - t) / bucketT)));
+            const binY = Math.floor(sp / speedBinKts);
+            const sy = numSpeedBins - 1 - Math.min(numSpeedBins - 1, binY);
+            grid[sy][tx]++;
+          }
+          let maxC = 0;
+          for (let yi = 0; yi < numSpeedBins; yi++) {
+            for (let xi = 0; xi < timeBins; xi++) {
+              maxC = Math.max(maxC, grid[yi][xi]);
+            }
+          }
+          maxC = Math.max(maxC, 1);
+          const plotW = 200;
+          const cellH = 12;
+          const plotH = numSpeedBins * cellH;
+          const cellW = plotW / timeBins;
+          const cells = [];
+          for (let yi = 0; yi < numSpeedBins; yi++) {
+            for (let xi = 0; xi < timeBins; xi++) {
+              const cnt = grid[yi][xi];
+              const p = cnt / maxC;
+              const L = Math.round(28 + 50 * p);
+              cells.push({
+                x: xi * cellW,
+                y: yi * cellH,
+                w: cellW - 0.5,
+                h: cellH - 0.5,
+                fill: 'hsl(' + hue + ', ' + sat + '%, ' + L + '%)'
+              });
+            }
+          }
+          const yLabels = [];
+          for (let yi = 0; yi < numSpeedBins; yi++) {
+            const low = (numSpeedBins - 1 - yi) * speedBinKts;
+            yLabels.push(low + '-' + (low + speedBinKts) + ' kt');
+          }
+          return {
+            cells: cells,
+            plotW: plotW,
+            plotH: plotH,
+            cellH: cellH,
+            timeBins: timeBins,
+            numSpeedBins: numSpeedBins,
+            speedBinKts: speedBinKts,
+            maxCount: maxC,
+            yLabels: yLabels
+          };
+        },
         _seedLatestByType(messages) {
           const grouped = {};
           messages.forEach(m => {

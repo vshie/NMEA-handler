@@ -233,6 +233,8 @@ class NMEAHandler:
         self.sensor_history = {
             'wind_apparent_speed': [],
             'wind_apparent_angle': [],
+            'wind_apparent_paired': [],  # {t, speed, angle} for rose/heatmap (MWV-R, bow-relative)
+            'wind_true_paired': [],  # {t, speed, angle} MWV-T and/or MWD (true / north-ref)
             'wind_true_speed': [],
             'wind_true_direction': [],
             'temperature': [],
@@ -665,12 +667,14 @@ class NMEAHandler:
                         self.sensor_data['wind_apparent']['timestamp'] = timestamp
                         self._record_history('wind_apparent_speed', speed)
                         self._record_history('wind_apparent_angle', angle)
+                        self._record_wind_paired_samples('wind_apparent_paired', speed, angle)
                     elif reference == 'T':
                         self.sensor_data['wind_true']['angle'] = angle
                         self.sensor_data['wind_true']['speed_kts'] = speed
                         self.sensor_data['wind_true']['source'] = 'WIMWV'
                         self.sensor_data['wind_true']['timestamp'] = timestamp
                         self._record_history('wind_true_speed', speed)
+                        self._record_wind_paired_samples('wind_true_paired', speed, angle)
             
             # MWD / WIMWD - Wind Direction and Speed (True, relative to north)
             elif msg_type in ('MWD', 'WIMWD'):
@@ -688,6 +692,10 @@ class NMEAHandler:
                     self.sensor_data['wind_true']['timestamp'] = timestamp
                     self._record_history('wind_true_direction', dir_true)
                     self._record_history('wind_true_speed', speed_kts)
+                    if dir_true is not None and speed_kts is not None:
+                        self._record_wind_paired_samples(
+                            'wind_true_paired', speed_kts, dir_true
+                        )
                     # Broadcast to Cockpit data-lake
                     if dir_true is not None:
                         self.ws_broadcast('wind-direction-true', round(dir_true, 1))
@@ -854,12 +862,38 @@ class NMEAHandler:
             if entry['t'] >= cutoff
         ]
 
+    def _record_wind_paired_samples(self, buffer_key, speed, angle):
+        """Append one timestamped sample for wind rose / heatmap (speed and angle both required)."""
+        if speed is None or angle is None:
+            return
+        now = time.time()
+        self.sensor_history[buffer_key].append({
+            't': now,
+            'speed': float(speed),
+            'angle': float(angle),
+        })
+        cutoff = now - self.history_duration
+        self.sensor_history[buffer_key] = [
+            e for e in self.sensor_history[buffer_key]
+            if e['t'] >= cutoff
+        ]
+
     def get_sensor_history(self):
         """Return the sensor history for sparklines."""
         # Return history with relative timestamps (seconds ago)
         now = time.time()
         result = {}
         for key, entries in self.sensor_history.items():
+            if key in ('wind_apparent_paired', 'wind_true_paired'):
+                result[key] = [
+                    {
+                        't': round(now - e['t']),
+                        'speed': e['speed'],
+                        'angle': e['angle'],
+                    }
+                    for e in entries
+                ]
+                continue
             result[key] = [
                 {'t': round(now - entry['t']), 'v': entry['v']}
                 for entry in entries
