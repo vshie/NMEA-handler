@@ -63,7 +63,7 @@ The extension forwards NMEA sentences to the autopilot via UDP on port 27000. In
 
 | Mode | Sentences | ArduPilot Use |
 |---|---|---|
-| **Wind Vane** (default) | `$WIMWV` | NMEA wind vane (`WNDVN_TYPE=4`) |
+| **Wind Vane** (default) | `$WIMWV` | NMEA wind vane — set wind vane type to **NMEA** in ArduRover parameters |
 | **GPS + Heading** | `$GPGGA`, `$GPRMC`, `$GPVTG`, `$HCHDT` | External GPS & heading source |
 
 Only one mode can be active at a time — sending both wind and GPS data on the same port can confuse the autopilot.
