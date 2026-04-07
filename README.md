@@ -1,10 +1,11 @@
 # Airmar 300WX WeatherStation - BlueOS Extension
 
-A BlueOS extension for the Airmar 300WX WeatherStation. Connects via NMEA 0183 serial, auto-negotiates 38400 baud for full bandwidth, and streams wind data to Cockpit via WebSocket.
+A BlueOS extension for the Airmar 300WX WeatherStation. Connects via NMEA 0183 serial, auto-negotiates **115200** baud (with `$PAMTC,BAUD,...,CFG` so the default persists across power cycles), and streams wind data to Cockpit via WebSocket.
 
 ## Features
 
-- Automatic serial port detection and baud rate negotiation (4800 → 38400)
+- Automatic serial port detection and baud rate negotiation (4800 → 115200, default saved on device)
+- **Auto-reconnect on extension restart**: last serial port, baud hint, and “stay at 4800” preference are stored in `state.json` under the mounted logs directory; a background thread connects at startup without using the UI. **Disconnect** in the UI clears the saved port so the next restart will scan ports instead.
 - Real-time dashboard with wind, heading, atmosphere, GPS, and attitude data
 - Sparkline history graphs for all sensor channels
 - Per-sentence enable/disable and transmission interval control
@@ -113,7 +114,7 @@ These logs persist across container restarts and can be managed from the Logs ta
 1. Open the Airmar 300WX extension from the BlueOS sidebar
 2. The extension auto-connects to the last used serial port on startup
 3. Select a serial port from the dropdown or device identification list
-4. Click "Connect" — the extension negotiates 38400 baud automatically
+4. Click "Connect" — the extension negotiates 115200 baud automatically and stores that as the sensor default
 5. View live sensor data on the Dashboard tab
 6. Configure sentence enable/disable on the Sentences tab
 7. View per-message-type data and Hz rates on the Raw Messages tab

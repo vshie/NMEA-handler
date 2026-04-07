@@ -27,8 +27,8 @@ app = Flask(__name__, static_folder='static')
 CORS(app)
 
 class NMEAHandler:
-    # Complete registry of all WX200 supported NMEA sentences
-    # Based on WX Series NMEA 0183 Developers Technical Manual
+    # Complete registry of WX-series supported NMEA sentences (200WX / 300WX, etc.)
+    # Based on WX Series NMEA 0183 Technical Manual (300WXR, 300WX, 150WX, 100WX)
     # max_chars: worst-case sentence length from WX Series manual Table 1 (incl $, *hh, CR, LF = +7)
     SUPPORTED_SENTENCES = {
         'DTM':   {'name': 'Datum Reference', 'description': 'GPS datum reference', 'default_enabled': False, 'default_interval': 10, 'max_chars': 47},
@@ -60,17 +60,35 @@ class NMEAHandler:
         'gps':      {'GGA', 'RMC', 'VTG', 'HDT'}, # External GPS + heading source
     }
     DEFAULT_AUTOPILOT_MODE = 'windvane'
+
+    # After probe at 4800, switch to this rate (300WX supports up to 115200 via $PAMTC,BAUD).
+    OPERATING_BAUD_RATE = 115200
     
     # Connection status phases
     CONN_STATUS_DISCONNECTED = 'disconnected'
     CONN_STATUS_AUTO_SCANNING = 'auto_scanning'
     CONN_STATUS_TRYING_4800 = 'trying_4800'
-    CONN_STATUS_TRYING_38400 = 'trying_38400'
+    CONN_STATUS_TRYING_HIGH_BAUD = 'trying_high_baud'
     CONN_STATUS_SWITCHING_BAUD = 'switching_baud'
     CONN_STATUS_ENABLING_SENTENCES = 'enabling_sentences'
     CONN_STATUS_CONNECTED = 'connected'
     CONN_STATUS_FAILED = 'failed'
-    
+
+    @staticmethod
+    def _line_looks_like_nmea(line):
+        """Heuristic shape check before checksum (probe / fast filter)."""
+        if not line or len(line) < 7 or ',' not in line:
+            return False
+        return line.startswith('$') or line.startswith('!')
+
+    @staticmethod
+    def _nmea_cmd(payload: str) -> bytes:
+        """Build $payload*hh\\r\\n — XOR checksum over payload (between $ and *), per NMEA 0183."""
+        csum = 0
+        for ch in payload:
+            csum ^= ord(ch)
+        return f'${payload}*{csum:02X}\r\n'.encode('ascii')
+
     def __init__(self):
         self.serial_connection = None
         # Create two separate loggers
@@ -123,6 +141,7 @@ class NMEAHandler:
         self.state = {
             'port': None,
             'baud_rate': 4800,
+            'stay_at_4800': False,  # persisted; used by startup auto-connect
             'is_streaming': False,
             'autopilot_mode': self.DEFAULT_AUTOPILOT_MODE,
             'sentence_config': {}  # { sentence_id: { "enabled": bool, "interval": int (tenths) } }
@@ -252,6 +271,12 @@ class NMEAHandler:
                 with open(self.state_path, 'r') as f:
                     loaded = json.load(f)
                 self.state.update(loaded)
+                # Older installs saved 38400; 300WX manual supports 115200 as max practical NMEA rate here.
+                if self.state.get('baud_rate') == 38400:
+                    self.state['baud_rate'] = self.OPERATING_BAUD_RATE
+                    self.save_state()
+                if 'stay_at_4800' not in self.state:
+                    self.state['stay_at_4800'] = False
                 if 'sentence_config' not in self.state or not isinstance(self.state['sentence_config'], dict):
                     self.state['sentence_config'] = {}
                 if self.state.get('autopilot_mode') not in self.AUTOPILOT_MODES:
@@ -280,19 +305,25 @@ class NMEAHandler:
         self.connection_step_since = time.time()
 
     def _auto_connect(self):
-        """Background auto-connect: try saved port first, then scan others."""
+        """Background auto-connect: try saved port + baud hint first, then scan others.
+        No UI click required; uses state.json from last successful session."""
         self._cancel_connect = False
         saved_port = self.state.get('port')
         saved_baud = self.state.get('baud_rate', 4800)
+        stay_4800 = bool(self.state.get('stay_at_4800', False))
 
         # Try the saved port first (most likely to succeed)
         if saved_port and Path(saved_port).exists():
             self._set_conn_status(self.CONN_STATUS_AUTO_SCANNING,
                                   f'Trying saved port {saved_port}...')
-            self.app_logger.info(f"Auto-connect: trying saved port {saved_port}")
+            self.app_logger.info(
+                f"Auto-connect: trying saved port {saved_port} "
+                f"(baud hint {saved_baud}, stay_at_4800={stay_4800})")
             try:
-                success, msg = self.connect_serial(saved_port, saved_baud,
-                                                   max_attempts=2)
+                success, msg = self.connect_serial(
+                    saved_port, saved_baud,
+                    stay_at_4800=stay_4800,
+                    max_attempts=6)
                 if success:
                     self.app_logger.info(f"Auto-connect: restored {saved_port}")
                     return
@@ -317,7 +348,10 @@ class NMEAHandler:
             self._set_conn_status(self.CONN_STATUS_AUTO_SCANNING,
                                   f'Scanning port {port} ({i}/{len(other_ports)})...')
             try:
-                success, msg = self.connect_serial(port, 4800, max_attempts=2)
+                success, msg = self.connect_serial(
+                    port, 4800,
+                    stay_at_4800=stay_4800,
+                    max_attempts=6)
                 if success:
                     self.app_logger.info(f"Auto-connect: connected on {port}")
                     return
@@ -346,21 +380,19 @@ class NMEAHandler:
 
     def _split_nmea_sentences(self, data):
         """Split a read buffer into individual NMEA sentences (one per yield).
-        Handles multiple sentences in one read (e.g. $HCHDG,...*7C$WIMWV,...*2C) or
-        multiple lines (e.g. $HCHDG,...\\r\\n$WIMWV,...)."""
-        if not data or '$' not in data:
+        Handles $... and !... (AIS etc.), multiple sentences per read, and CR/LF."""
+        if not data or ('$' not in data and '!' not in data):
             return
-        # Normalize line breaks and split into lines
         for line in re.split(r'[\r\n]+', data):
             line = line.strip()
             if not line:
                 continue
-            # One line may contain multiple $... sentences if device concatenated them
-            for part in line.split('$'):
-                part = part.strip()
-                if not part or ',' not in part:
-                    continue
-                yield '$' + part
+            starts = [m.start() for m in re.finditer(r'[$!]', line)]
+            for i, start in enumerate(starts):
+                end = starts[i + 1] if i + 1 < len(starts) else len(line)
+                frag = line[start:end].strip()
+                if frag and ',' in frag:
+                    yield frag
 
     def _map_msg_to_sentence_id(self, raw_line, msg_type):
         """Map an incoming NMEA msg to a device sentence_id (SUPPORTED_SENTENCES key).
@@ -387,9 +419,11 @@ class NMEAHandler:
             return None
 
     def _nmea_checksum_ok(self, raw_line):
-        """Return True if checksum matches, False if mismatch, None if no checksum present."""
+        """Return True if checksum matches, False if mismatch, None if missing/invalid (NMEA 0183: $ or !)."""
         try:
-            if not raw_line or '*' not in raw_line or not raw_line.startswith('$'):
+            if not raw_line or '*' not in raw_line:
+                return None
+            if not (raw_line.startswith('$') or raw_line.startswith('!')):
                 return None
             body, chk = raw_line[1:].split('*', 1)
             chk = chk.strip()
@@ -402,6 +436,12 @@ class NMEAHandler:
             return calc == expected
         except Exception:
             return None
+
+    def _incoming_line_checksum_valid(self, line):
+        """300WX manual: received sentences must include a matching checksum."""
+        if not self._line_looks_like_nmea(line):
+            return False
+        return self._nmea_checksum_ok(line) is True
 
     def get_serial_health(self):
         """Return current serial health/debug stats."""
@@ -494,24 +534,24 @@ class NMEAHandler:
                             self.serial_health['read_timeouts'] += 1
                     for data in self._split_nmea_sentences(raw):
                         got_data = True
-                        self.messages_received += 1
-                        # Parse NMEA message type (letters only; avoids HCHDG31.0 from truncated lines)
-                        raw_type = data.split(',')[0].lstrip('$').strip()
-                        m = re.match(r'^[A-Z]+', raw_type) if raw_type else None
-                        msg_type = m.group(0) if m else (raw_type or '')
-                        self.nmea_messages.add(msg_type)
-                        # Checksum quality metrics (helps spot flaky links)
                         chk_ok = self._nmea_checksum_ok(data)
                         with self._serial_health_lock:
                             if chk_ok is True:
                                 self.serial_health['last_good_nmea_ts'] = time.time()
                             elif chk_ok is False:
                                 self.serial_health['checksum_mismatch'] += 1
-                                # still treat as received; it's useful for diagnosis
-                                self.serial_health['last_good_nmea_ts'] = time.time()
                             else:
                                 self.serial_health['checksum_missing'] += 1
-                                self.serial_health['last_good_nmea_ts'] = time.time()
+                        # Per 300WX manual: only accept sentences with valid checksum
+                        if chk_ok is not True:
+                            continue
+
+                        self.messages_received += 1
+                        # Parse NMEA message type (letters only; avoids HCHDG31.0 from truncated lines)
+                        raw_type = data.split(',')[0].lstrip('$!').strip()
+                        m = re.match(r'^[A-Z]+', raw_type) if raw_type else None
+                        msg_type = m.group(0) if m else (raw_type or '')
+                        self.nmea_messages.add(msg_type)
                         # Track sentence last-seen for UI auto-sync
                         sentence_id = self._map_msg_to_sentence_id(data, msg_type)
                         if sentence_id:
@@ -1120,17 +1160,18 @@ class NMEAHandler:
     def _try_baud_rate(self, port, baud_rate, timeout=3):
         """
         Try to connect at a specific baud rate and wait for valid NMEA data.
-        Sends enable periodic ($PAMTX,1) as soon as the port is open so a stopped
+        Sends enable periodic ($PAMTX,1*hh) as soon as the port is open so a stopped
         device can start sending before we check for incoming data.
-        At 4800 baud we require at least 5 messages before considering connected.
+        At 4800 baud, output may be ~1 Hz per sentence; require fewer lines but a
+        longer window than at the high operating baud.
         Returns (success, serial_connection or None)
         """
-        min_messages = 5 if baud_rate == 4800 else 1
+        min_messages = 2 if baud_rate == 4800 else 1
         try:
             self.app_logger.debug(f"Trying {port} at {baud_rate} baud...")
             conn = self._safe_serial_open(port, baud_rate)
             conn.reset_input_buffer()
-            conn.write(b'$PAMTX,1\r\n')
+            conn.write(self._nmea_cmd('PAMTX,1'))
             time.sleep(0.3)
 
             start_time = time.time()
@@ -1138,7 +1179,7 @@ class NMEAHandler:
             while time.time() - start_time < timeout:
                 try:
                     data = conn.readline().decode('utf-8', errors='ignore').strip()
-                    if data.startswith('$'):
+                    if self._incoming_line_checksum_valid(data):
                         valid_count += 1
                         msg_type = data.split(',')[0][1:]
                         self.app_logger.debug(f"NMEA at {baud_rate}: {msg_type} ({valid_count}/{min_messages})")
@@ -1155,31 +1196,32 @@ class NMEAHandler:
             self.app_logger.error(f"Failed to open port at {baud_rate} baud: {e}")
             return False, None
 
-    def _switch_to_38400(self, port):
+    def _switch_to_operating_baud(self, port):
         """
-        Switch the device from 4800 to 38400 baud.
-        Assumes we're currently connected at 4800 baud. After sending the baud change
-        command we keep reading at 4800; when messages stop or become garbled we
-        close and reopen at 38400.
+        Switch the device from 4800 to OPERATING_BAUD_RATE (115200).
+        Assumes we're currently connected at 4800 baud.
+        Sends $PAMTC,BAUD,<rate>,CFG after the switch so the default rate is stored in NVM
+        (applies from next power-on per 300WX manual).
         Returns (success, message)
         """
+        rate = self.OPERATING_BAUD_RATE
         try:
             self._set_conn_status(self.CONN_STATUS_SWITCHING_BAUD,
-                f'{port} — switching to 38400 baud')
+                f'{port} — switching to {rate} baud')
 
-            # Per WX Series manual: suspend transmission first, then change baud, then resume at new baud.
+            # Per 300WX manual: suspend transmission first, then change baud, then resume.
 
-            # Step 1: $PAMTX (no argument) at 4800 = temporarily disable transmission of periodic sentences
-            self.app_logger.debug("$PAMTX — suspend transmission at 4800")
-            self.serial_connection.write(b'$PAMTX\r\n')
+            # Step 1: $PAMTX,0 — suspend periodic sentences at 4800
+            self.app_logger.debug("$PAMTX,0 — suspend transmission at 4800")
+            self.serial_connection.write(self._nmea_cmd('PAMTX,0'))
             time.sleep(0.3)
 
-            # Step 2: $PAMTC,BAUD,38400 at 4800; unit finishes current sentence at 4800 then switches to 38400
-            self.app_logger.debug("$PAMTC,BAUD,38400 at 4800")
-            self.serial_connection.write(b'$PAMTC,BAUD,38400\r\n')
+            # Step 2: $PAMTC,BAUD,<rate>*hh at 4800 — immediate switch on the wire
+            self.app_logger.debug(f"$PAMTC,BAUD,{rate} at 4800")
+            self.serial_connection.write(self._nmea_cmd(f'PAMTC,BAUD,{rate}'))
             time.sleep(0.5)
 
-            # Step 3: Delay to allow reception of any remaining queued sentences at 4800 baud
+            # Step 3: Drain any remaining bytes at 4800
             self.app_logger.debug("Draining 4800 baud output...")
             self.serial_connection.timeout = 0.2
             drain_deadline = time.time() + 1.0
@@ -1189,26 +1231,31 @@ class NMEAHandler:
                     break
             self.serial_connection.timeout = 1
 
-            # Step 4: Change host serial port to 38400 baud
+            # Step 4: Host reopen at operating baud
             self.serial_connection.close()
             time.sleep(0.3)
-            self.app_logger.debug("Reopening at 38400 baud")
-            self.serial_connection = self._safe_serial_open(port, 38400)
-            self.state['baud_rate'] = 38400
+            self.app_logger.debug(f"Reopening at {rate} baud")
+            self.serial_connection = self._safe_serial_open(port, rate)
+            self.state['baud_rate'] = rate
             time.sleep(0.2)
 
-            # Step 5: $PAMTX,1 at 38400 baud to resume transmission of periodic sentences
-            self.app_logger.debug("$PAMTX,1 — resume transmission at 38400")
-            self.serial_connection.write(b'$PAMTX,1\r\n')
+            # Step 5: Resume periodic output
+            self.app_logger.debug(f"$PAMTX,1 — resume transmission at {rate}")
+            self.serial_connection.write(self._nmea_cmd('PAMTX,1'))
             time.sleep(0.3)
 
-            # Step 6: Verify we're receiving valid NMEA at 38400
+            # Step 6: Store default baud in NVM (does not change active rate; next cold boot uses this)
+            self.app_logger.debug(f"$PAMTC,BAUD,{rate},CFG — save default baud to NVM")
+            self.serial_connection.write(self._nmea_cmd(f'PAMTC,BAUD,{rate},CFG'))
+            time.sleep(0.3)
+
+            # Step 7: Verify we're receiving valid NMEA at operating baud
             start_time = time.time()
             while time.time() - start_time < 5:
                 data = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
-                if data.startswith('$'):
-                    self.app_logger.debug("Confirmed communication at 38400")
-                    return True, "Switched to 38400 baud"
+                if self._incoming_line_checksum_valid(data):
+                    self.app_logger.debug(f"Confirmed communication at {rate}")
+                    return True, f"Switched to {rate} baud (default saved with CFG)"
                 time.sleep(0.1)
 
             return False, "No response after baud rate switch"
@@ -1220,7 +1267,7 @@ class NMEAHandler:
     def enable_required_sentences(self):
         """
         Enable the NMEA sentences required for dashboard display.
-        Should only be called when connected at 38400 baud.
+        Should only be called when connected at operating baud (115200) unless staying at 4800.
         Always enables periodic transmission first in case the device was previously stopped.
         Returns (success, message)
         """
@@ -1233,7 +1280,7 @@ class NMEAHandler:
                 return False, "Not connected"
             
             # Ensure periodic sentences are on (device may have been stopped by a previous session)
-            self.serial_connection.write(b'$PAMTX,1\r\n')
+            self.serial_connection.write(self._nmea_cmd('PAMTX,1'))
             time.sleep(0.3)
 
             enabled_count = 0
@@ -1241,9 +1288,9 @@ class NMEAHandler:
                 config = self.SUPPORTED_SENTENCES.get(sentence_id, {})
                 interval = config.get('default_interval', 10)
 
-                cmd = f'$PAMTC,EN,{sentence_id},1,{interval}\r\n'
+                cmd = self._nmea_cmd(f'PAMTC,EN,{sentence_id},1,{interval}')
                 self.app_logger.debug(f"Enabling sentence {sentence_id}")
-                self.serial_connection.write(cmd.encode())
+                self.serial_connection.write(cmd)
                 time.sleep(0.2)
                 enabled_count += 1
 
@@ -1276,11 +1323,11 @@ class NMEAHandler:
                 interval = self.SUPPORTED_SENTENCES[sentence_id].get('default_interval', 10)
             
             enable_flag = 1 if enabled else 0
-            cmd = f'$PAMTC,EN,{sentence_id},{enable_flag},{interval}\r\n'
-            
+            cmd = self._nmea_cmd(f'PAMTC,EN,{sentence_id},{enable_flag},{interval}')
+
             self.app_logger.debug(f"Configuring sentence {sentence_id}: enabled={enabled}, interval={interval/10}s")
             with self._serial_lock:
-                self.serial_connection.write(cmd.encode())
+                self.serial_connection.write(cmd)
                 time.sleep(0.2)
             
             if 'sentence_config' not in self.state:
@@ -1324,9 +1371,9 @@ class NMEAHandler:
                     if interval is None:
                         interval = self.SUPPORTED_SENTENCES[sentence_id].get('default_interval', 10)
                     enable_flag = 1 if enabled else 0
-                    cmd = f'$PAMTC,EN,{sentence_id},{enable_flag},{interval}\r\n'
+                    cmd = self._nmea_cmd(f'PAMTC,EN,{sentence_id},{enable_flag},{interval}')
                     try:
-                        self.serial_connection.write(cmd.encode())
+                        self.serial_connection.write(cmd)
                         if 'sentence_config' not in self.state:
                             self.state['sentence_config'] = {}
                         self.state['sentence_config'][sentence_id] = {'enabled': enabled, 'interval': interval}
@@ -1379,7 +1426,7 @@ class NMEAHandler:
                 
                 # Send query command
                 self.app_logger.debug("Querying device sentence configuration")
-                self.serial_connection.write(b'$PAMTC,EN,Q\r\n')
+                self.serial_connection.write(self._nmea_cmd('PAMTC,EN,Q'))
                 
                 # Collect responses (device sends multiple $PAMTR,EN lines)
                 config = {}
@@ -1445,7 +1492,7 @@ class NMEAHandler:
                 return False, "Not connected"
             
             self.app_logger.debug("Saving sentence configuration to device EEPROM")
-            self.serial_connection.write(b'$PAMTC,EN,S\r\n')
+            self.serial_connection.write(self._nmea_cmd('PAMTC,EN,S'))
             time.sleep(0.5)
             
             return True, "Configuration saved to device EEPROM"
@@ -1466,7 +1513,7 @@ class NMEAHandler:
                 return False, "Not connected"
             
             self.app_logger.debug("Loading factory default sentence configuration")
-            self.serial_connection.write(b'$PAMTC,EN,LD\r\n')
+            self.serial_connection.write(self._nmea_cmd('PAMTC,EN,LD'))
             time.sleep(0.5)
             
             return True, "Factory defaults loaded"
@@ -1504,7 +1551,7 @@ class NMEAHandler:
         Args:
             port: Serial port path
             baud_rate: Hint for which baud to try first (saved state)
-            stay_at_4800: If True, never switch to 38400
+            stay_at_4800: If True, never switch to OPERATING_BAUD_RATE
             max_attempts: Total attempts across all baud rates (default 6 = 3 per baud)
         """
         try:
@@ -1519,12 +1566,13 @@ class NMEAHandler:
                 return False, self.connection_message
 
             self.detected_baud = None
+            op = self.OPERATING_BAUD_RATE
             if stay_at_4800:
                 baud_rates = [4800]
-            elif baud_rate == 38400:
-                baud_rates = [38400, 4800]
+            elif baud_rate == op:
+                baud_rates = [op, 4800]
             else:
-                baud_rates = [4800, 38400]
+                baud_rates = [4800, op]
             
             # Try to establish connection
             n_bauds = len(baud_rates)
@@ -1537,12 +1585,14 @@ class NMEAHandler:
                 attempt_num = attempt // n_bauds + 1
                 max_per_baud = max_attempts // n_bauds
 
-                status = self.CONN_STATUS_TRYING_4800 if current_baud == 4800 else self.CONN_STATUS_TRYING_38400
+                status = (self.CONN_STATUS_TRYING_4800 if current_baud == 4800
+                          else self.CONN_STATUS_TRYING_HIGH_BAUD)
                 self._set_conn_status(status, f'{port} — {current_baud} baud (attempt {attempt_num}/{max_per_baud})')
 
                 self.app_logger.debug(self.connection_message)
 
-                success, conn = self._try_baud_rate(port, current_baud, timeout=3)
+                probe_timeout = 12.0 if current_baud == 4800 else 4.0
+                success, conn = self._try_baud_rate(port, current_baud, timeout=probe_timeout)
                 
                 if success:
                     self.serial_connection = conn
@@ -1550,27 +1600,28 @@ class NMEAHandler:
                     self.state['port'] = port
                     
                     if current_baud == 4800 and not stay_at_4800:
-                        # Connected at 4800, switch to 38400 unless user requested 4800 only
-                        self.app_logger.debug("Connected at 4800, switching to 38400...")
-                        success, msg = self._switch_to_38400(port)
+                        # Connected at 4800, switch to operating baud unless user requested 4800 only
+                        self.app_logger.debug(f"Connected at 4800, switching to {op}...")
+                        success, msg = self._switch_to_operating_baud(port)
                         if not success:
-                            # Device may have switched anyway; close and try 38400 next
-                            self.app_logger.warning(f"Switch to 38400 failed: {msg}; will try 38400 directly")
+                            self.app_logger.warning(
+                                f"Switch to {op} failed: {msg}; will try {op} directly")
                             if self.serial_connection and self.serial_connection.is_open:
                                 self.serial_connection.close()
                             self.serial_connection = None
                             continue
                     elif current_baud == 4800 and stay_at_4800:
                         self.app_logger.debug("Staying at 4800 (no baud switch)")
-                    elif current_baud == 38400 and stay_at_4800:
-                        # User requested 4800 but device was already at 38400; switch device to 4800
-                        self.app_logger.debug("Switching device from 38400 to 4800 (user requested 4800 only)")
+                    elif current_baud == op and stay_at_4800:
+                        # User asked for 4800 only but device is at high baud; move link to 4800
+                        self.app_logger.debug(
+                            f"Switching device from {op} to 4800 (user requested 4800 only)")
                         success, msg = self.change_baud_rate(4800)
                         if not success:
                             self.app_logger.warning(f"Could not switch device to 4800: {msg}")
                         # Continue; reader will be started in common path below
                     
-                    # Enable required sentences (works at 4800 or 38400)
+                    # Enable required sentences (4800 or operating baud)
                     success, msg = self.enable_required_sentences()
                     if not success:
                         self.app_logger.warning(f"Failed to enable sentences: {msg}")
@@ -1589,15 +1640,16 @@ class NMEAHandler:
                     self.start_reader_thread()
                     
                     # Update state from actual serial baud (e.g. 4800 after change_baud_rate(4800))
-                    final_baud = self.serial_connection.baudrate if self.serial_connection else 38400
+                    final_baud = self.serial_connection.baudrate if self.serial_connection else op
                     self.state['baud_rate'] = final_baud
+                    self.state['stay_at_4800'] = bool(stay_at_4800)
                     self.save_state()
                     self.connected_since = time.time()
                     
                     if final_baud == 4800:
                         detected_msg = " (4800 only, no switch)"
-                    elif self.detected_baud == 38400:
-                        detected_msg = " (detected at 38400)"
+                    elif self.detected_baud == op:
+                        detected_msg = f" (detected at {op})"
                     else:
                         detected_msg = " (switched from 4800)"
                     self._set_conn_status(self.CONN_STATUS_CONNECTED,
@@ -1672,6 +1724,9 @@ class NMEAHandler:
             'baud_rate': self.serial_connection.baudrate if is_connected else 0,
             'detected_baud': self.detected_baud,
             'required_sentences': list(self.REQUIRED_SENTENCES),
+            'stay_at_4800': bool(self.state.get('stay_at_4800', False)),
+            'saved_port': self.state.get('port'),
+            'saved_baud_rate': self.state.get('baud_rate', 4800),
         }
 
     def read_serial(self):
@@ -1707,7 +1762,7 @@ class NMEAHandler:
             return False, str(e)
 
     def change_baud_rate(self, new_baud_rate):
-        """Change the baud rate of the weather station"""
+        """Change the baud rate of the weather station and save default to NVM (CFG)."""
         try:
             if not self.serial_connection or not self.serial_connection.is_open:
                 return False, "Not connected to serial port"
@@ -1718,13 +1773,12 @@ class NMEAHandler:
 
             # Step 1: Disable periodic sentences
             self.app_logger.debug("Disabling periodic sentences")
-            self.serial_connection.write(b'$PAMTX\r\n')
+            self.serial_connection.write(self._nmea_cmd('PAMTX,0'))
             time.sleep(0.5)  # Wait for command to be processed
 
             # Step 2: Send baud rate change command
             self.app_logger.debug(f"Sending baud change to {new_baud_rate}")
-            baud_cmd = f'$PAMTC,BAUD,{new_baud_rate}\r\n'.encode()
-            self.serial_connection.write(baud_cmd)
+            self.serial_connection.write(self._nmea_cmd(f'PAMTC,BAUD,{new_baud_rate}'))
             time.sleep(1)  # Wait for any queued messages
 
             # Step 3: Close current connection
@@ -1739,13 +1793,18 @@ class NMEAHandler:
 
             # Step 5: Re-enable periodic sentences
             self.app_logger.debug("Re-enabling periodic sentences")
-            self.serial_connection.write(b'$PAMTX,1\r\n')
+            self.serial_connection.write(self._nmea_cmd('PAMTX,1'))
+            time.sleep(0.2)
+
+            # Step 6: Persist as power-on default (300WX: $PAMTC,BAUD,<n>,CFG)
+            self.app_logger.debug(f"Saving default baud {new_baud_rate} to NVM (CFG)")
+            self.serial_connection.write(self._nmea_cmd(f'PAMTC,BAUD,{new_baud_rate},CFG'))
 
             # Update state
             self.state['baud_rate'] = new_baud_rate
             self.save_state()
 
-            return True, f"Successfully changed baud rate to {new_baud_rate}"
+            return True, f"Successfully changed baud rate to {new_baud_rate} (saved as default)"
         except Exception as e:
             self.app_logger.error(f"Error changing baud rate: {e}")
             return False, str(e)
@@ -1865,7 +1924,7 @@ def select_port():
     if not data or 'port' not in data:
         return jsonify({"success": False, "message": "No port specified"})
     
-    # Use saved baud as a hint for which rate to try first (e.g. 38400 if already switched)
+    # Use saved baud as a hint for which rate to try first (e.g. 115200 if already switched)
     if data['port'] == nmea_handler.state.get('port'):
         baud_rate = nmea_handler.state.get('baud_rate', 4800)
     else:
@@ -2187,8 +2246,12 @@ def change_baud():
         return jsonify({"success": False, "message": "No baud rate specified"})
     
     baud_rate = data['baud_rate']
-    if baud_rate not in [4800, 38400]:
-        return jsonify({"success": False, "message": "Invalid baud rate. Must be 4800 or 38400"})
+    allowed = [4800, nmea_handler.OPERATING_BAUD_RATE]
+    if baud_rate not in allowed:
+        return jsonify({
+            "success": False,
+            "message": f"Invalid baud rate. Must be one of: {allowed}",
+        })
     
     success, message = nmea_handler.change_baud_rate(baud_rate)
     return jsonify({"success": success, "message": message})

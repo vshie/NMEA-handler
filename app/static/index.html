@@ -544,11 +544,11 @@
                   </v-btn>
                   <template v-if="connectionInfo.connected">
                     <v-btn
-                      v-if="connectionInfo.baud_rate === 38400"
+                      v-if="connectionInfo.baud_rate === 115200"
                       color="secondary"
                       @click="forceDeviceTo4800"
                       class="mr-2"
-                      title="Send $PAMTC,BAUD,4800 and reopen at 4800 (use if device was left at 38400 and you see mixed data)"
+                      title="Send $PAMTC,BAUD,4800 and reopen at 4800 (use if the link is at 115200 and you need 4800)"
                     >
                       <v-icon left>mdi-numeric</v-icon>
                       Force device to 4800 baud
@@ -716,7 +716,7 @@
                               and select the serial port from the dropdown (or pick it from
                               <em>Device Identification</em>).</li>
                           <li>Click <strong>Connect</strong>. The extension will auto-negotiate
-                              38400 baud for maximum bandwidth.</li>
+                              115200 baud for maximum bandwidth.</li>
                           <li>Once connected, the <strong>Dashboard</strong> tab shows live sensor data.</li>
                         </ol>
                         <v-alert type="info" dense text class="mt-3 mb-0">
@@ -847,7 +847,7 @@
                               Check that the USB cable is connected and the adapter driver is loaded.
                               Click the refresh button to rescan.</li>
                           <li><strong>Garbled data?</strong>
-                              The extension auto-switches to 38400 baud. If the device was left in a
+                              The extension auto-switches to 115200 baud. If the device was left in a
                               mixed state, power-cycle the WeatherStation and reconnect.</li>
                           <li><strong>Cockpit not showing wind data?</strong>
                               Verify the WebSocket URL is correct and that the extension is connected
@@ -1361,7 +1361,7 @@
                       rounded
                     ></v-progress-linear>
                     <div v-if="bandwidthPercent > 95" class="text-caption red--text mt-1">
-                      WARNING: Near or over capacity. Reduce enabled sentences, lower their rate, or switch to 38400 baud.
+                      WARNING: Near or over capacity. Reduce enabled sentences, lower their rate, or confirm you are at 115200 baud.
                     </div>
                   </div>
 
@@ -1602,10 +1602,13 @@
           port: null,
           baud_rate: 0,
           detected_baud: null,
-          required_sentences: []
+          required_sentences: [],
+          stay_at_4800: false,
+          saved_port: null,
+          saved_baud_rate: 4800
         },
         connectionPollInterval: null,
-        stayAt4800Baud: false,  // When true, connect at 4800 and never switch to 38400 (avoids mixed-baud issues)
+        stayAt4800Baud: false,  // When true, connect at 4800 and never switch to 115200 (avoids mixed-baud issues)
         // Freshness tick so "Xs ago" updates every second
         freshnessTick: 0,
         freshnessInterval: null,
@@ -1713,8 +1716,9 @@
             'disconnected': 'Disconnected',
             'auto_scanning': 'Auto-connecting...',
             'trying_4800': 'Trying 4800 baud...',
-            'trying_38400': 'Trying 38400 baud...',
-            'switching_baud': 'Switching to 38400 baud...',
+            'trying_high_baud': 'Trying 115200 baud...',
+            'trying_38400': 'Trying 115200 baud...', // legacy status string
+            'switching_baud': 'Switching to 115200 baud...',
             'enabling_sentences': 'Enabling NMEA sentences...',
             'connected': 'Connected',
             'failed': 'Connection Failed'
@@ -2414,9 +2418,12 @@
           try {
             const response = await axios.get('/api/connection/status');
             this.connectionInfo = response.data;
-            
+            if (typeof response.data.stay_at_4800 === 'boolean') {
+              this.stayAt4800Baud = response.data.stay_at_4800;
+            }
+
             // Update isConnecting based on status
-            const connectingStatuses = ['auto_scanning', 'trying_4800', 'trying_38400', 'switching_baud', 'enabling_sentences'];
+            const connectingStatuses = ['auto_scanning', 'trying_4800', 'trying_high_baud', 'switching_baud', 'enabling_sentences'];
             const wasConnecting = this.isConnecting;
             this.isConnecting = connectingStatuses.includes(this.connectionInfo.status);
 
