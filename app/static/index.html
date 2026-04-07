@@ -544,16 +544,6 @@
                   </v-btn>
                   <template v-if="connectionInfo.connected">
                     <v-btn
-                      v-if="connectionInfo.baud_rate === 115200"
-                      color="secondary"
-                      @click="forceDeviceTo4800"
-                      class="mr-2"
-                      title="Send $PAMTC,BAUD,4800 and reopen at 4800 (use if the link is at 115200 and you need 4800)"
-                    >
-                      <v-icon left>mdi-numeric</v-icon>
-                      Force device to 4800 baud
-                    </v-btn>
-                    <v-btn
                       color="error"
                       @click="disconnectPort"
                       class="mr-2"
@@ -835,6 +825,37 @@
                       </v-card-text>
                     </v-card>
 
+                    <!-- Advanced serial: force 4800 baud -->
+                    <v-card outlined class="mb-4">
+                      <v-card-title class="text-subtitle-1">
+                        <v-icon left small>mdi-speedometer-slow</v-icon>
+                        Serial baud rate (advanced)
+                      </v-card-title>
+                      <v-card-text>
+                        <p class="body-2 mb-3">
+                          If the link is at 115200 baud but you need standard 4800 NMEA (for example for another listener),
+                          you can command the WeatherStation to 4800 baud and reopen the port.
+                          This also saves 4800 as the device default (same as a manual baud change).
+                        </p>
+                        <v-btn
+                          v-if="connectionInfo.connected && connectionInfo.baud_rate === 115200"
+                          color="secondary"
+                          @click="forceDeviceTo4800"
+                          class="mr-2 mb-2"
+                          title="Send $PAMTC,BAUD,4800*… and reopen at 4800"
+                        >
+                          <v-icon left>mdi-numeric</v-icon>
+                          Force device to 4800 baud
+                        </v-btn>
+                        <p v-else-if="connectionInfo.connected" class="body-2 grey--text mb-0">
+                          Current link is already at {{ connectionInfo.baud_rate }} baud — forcing 4800 is only offered at 115200.
+                        </p>
+                        <p v-else class="body-2 grey--text mb-0">
+                          Connect to the WeatherStation above to use this option.
+                        </p>
+                      </v-card-text>
+                    </v-card>
+
                     <!-- Help -->
                     <v-card outlined class="mb-2">
                       <v-card-title class="text-subtitle-1">
@@ -853,7 +874,9 @@
                               Verify the WebSocket URL is correct and that the extension is connected
                               to the WeatherStation (green status above).</li>
                           <li><strong>Need to stay at 4800 baud?</strong>
-                              Check the "Stay at 4800 baud only" box before connecting.</li>
+                              Check the "Stay at 4800 baud only" box before connecting, or
+                              after connecting at 115200 use <strong>Setup</strong> &rarr; <em>Serial baud rate (advanced)</em>
+                              to force the device to 4800 baud.</li>
                         </ul>
                       </v-card-text>
                     </v-card>
@@ -1665,22 +1688,39 @@
         },
         // NMEA message type descriptions
         nmeaDescriptions: {
-          'GPZDA': 'Date & Time',
-          'WIMWV': 'Wind Speed & Angle (Relative)',
-          'WIMWD': 'Wind Direction & Speed (True)',
-          'GPGGA': 'GPS Position Fix',
-          'GPGA': 'GPS Position Fix',
-          'YXXDR': 'Transducer Measurements',
-          'GPRMC': 'Recommended Minimum Navigation',
+          'GGA': 'GPS Fix Data',
+          'GNGGA': 'GPS Fix Data (GNSS)',
+          'GPGGA': 'GPS Fix Data',
+          'GPGA': 'GPS Fix Data',
+          'VTG': 'Track Made Good & Ground Speed',
+          'GNVTG': 'Track & Speed (GNSS)',
           'GPVTG': 'Track Made Good & Ground Speed',
+          'ZDA': 'Time & Date',
+          'GNZDA': 'Time & Date (GNSS)',
+          'GPZDA': 'Date & Time',
+          'MWV': 'Wind Speed & Angle',
+          'WIMWV': 'Wind Speed & Angle (Relative)',
+          'MWD': 'Wind Direction & Speed (True)',
+          'WIMWD': 'Wind Direction & Speed (True)',
+          'MDA': 'Meteorological Composite',
+          'WIMDA': 'Meteorological Composite',
+          'YXXDR': 'Transducer Measurements',
+          'XDR': 'Transducer Measurements',
+          'GPRMC': 'Recommended Minimum Navigation',
+          'RMC': 'Recommended Minimum Navigation',
           'GPGLL': 'Geographic Position',
+          'GLL': 'Geographic Position',
           'GPGSA': 'GPS DOP & Active Satellites',
+          'GSA': 'GPS DOP & Active Satellites',
           'GPGSV': 'Satellites in View',
+          'GSV': 'Satellites in View',
+          'HDT': 'Heading True',
           'HCHDT': 'Heading True',
+          'HDG': 'Heading Magnetic',
           'HCHDG': 'Heading Magnetic',
           'CHDG': 'Heading Magnetic (Compact)',
+          'ROT': 'Rate of Turn',
           'TIROT': 'Rate of Turn',
-          'WIMDA': 'Meteorological Composite',
           'WIVWR': 'Relative Wind (Alt)',
           'WIVWT': 'True Wind (Alt)'
         }
@@ -2094,18 +2134,34 @@
             const fields = data.split(',');
             
             switch(type) {
+              case 'ZDA':
+              case 'GNZDA':
               case 'GPZDA': return this.parseGPZDA(fields);
+              case 'MWV':
               case 'WIMWV': return this.parseWIMWV(fields);
+              case 'MWD':
               case 'WIMWD': return this.parseWIMWD(fields);
-              case 'GPGGA': return this.parseGPGGA(fields);
+              case 'GGA':
+              case 'GNGGA':
+              case 'GPGGA':
               case 'GPGA': return this.parseGPGGA(fields);
-              case 'YXXDR': return this.parseYXXDR(fields);
+              case 'YXXDR':
+              case 'XDR': return this.parseYXXDR(fields);
+              case 'RMC':
+              case 'GNRMC':
               case 'GPRMC': return this.parseGPRMC(fields);
+              case 'VTG':
+              case 'GNVTG':
               case 'GPVTG': return this.parseGPVTG(fields);
+              case 'GLL':
+              case 'GNGLL':
               case 'GPGLL': return this.parseGPGLL(fields);
+              case 'HDT':
               case 'HCHDT': return this.parseHCHDT(fields);
-              case 'HCHDG': return this.parseHCHDG(fields);
+              case 'HDG':
+              case 'HCHDG':
               case 'CHDG': return this.parseHCHDG(fields);
+              case 'MDA':
               case 'WIMDA': return this.parseWIMDA(fields);
               default: return this.parseGeneric(fields);
             }

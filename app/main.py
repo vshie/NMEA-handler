@@ -63,6 +63,12 @@ class NMEAHandler:
 
     # After probe at 4800, switch to this rate (300WX supports up to 115200 via $PAMTC,BAUD).
     OPERATING_BAUD_RATE = 115200
+
+    # 5-char addresses like $GNGGA = 2-char talker (GN) + 3-char sentence (GGA); normalize to sentence id.
+    _NMEA_THREE_LETTER_SENTENCES = frozenset({
+        'GGA', 'GLL', 'RMC', 'VTG', 'GSA', 'GSV', 'ZDA', 'DTM', 'GNS',
+        'MWV', 'MWD', 'MDA', 'HDT', 'HDG', 'ROT', 'XDR', 'THS', 'VWR', 'VWT',
+    })
     
     # Connection status phases
     CONN_STATUS_DISCONNECTED = 'disconnected'
@@ -88,6 +94,19 @@ class NMEAHandler:
         for ch in payload:
             csum ^= ord(ch)
         return f'${payload}*{csum:02X}\r\n'.encode('ascii')
+
+    @classmethod
+    def _nmea_sentence_formatter(cls, addr: str) -> str:
+        """
+        Map NMEA address field (no leading $/!) to logical sentence type.
+        Standard sentences use TTSSS (2-char talker + 3-char formatter), e.g. GNGGA -> GGA, GNVTG -> VTG.
+        Proprietary (PAMTC) and non-standard lengths are returned unchanged.
+        """
+        if len(addr) == 5 and addr.isalpha() and addr.isupper():
+            suffix = addr[2:]
+            if suffix in cls._NMEA_THREE_LETTER_SENTENCES:
+                return suffix
+        return addr
 
     def __init__(self):
         self.serial_connection = None
@@ -401,8 +420,8 @@ class NMEAHandler:
             if not msg_type:
                 return None
 
-            # WIMWV maps to MWVR/MWVT depending on R/T field
-            if msg_type == 'WIMWV':
+            # MWV / WIMWV maps to MWVR/MWVT depending on R/T field
+            if msg_type in ('MWV', 'WIMWV'):
                 fields = raw_line.split('*')[0].split(',')
                 ref = fields[2] if len(fields) > 2 else ''
                 if ref == 'T':
@@ -550,7 +569,8 @@ class NMEAHandler:
                         # Parse NMEA message type (letters only; avoids HCHDG31.0 from truncated lines)
                         raw_type = data.split(',')[0].lstrip('$!').strip()
                         m = re.match(r'^[A-Z]+', raw_type) if raw_type else None
-                        msg_type = m.group(0) if m else (raw_type or '')
+                        addr = m.group(0) if m else (raw_type or '')
+                        msg_type = self._nmea_sentence_formatter(addr)
                         self.nmea_messages.add(msg_type)
                         # Track sentence last-seen for UI auto-sync
                         sentence_id = self._map_msg_to_sentence_id(data, msg_type)
@@ -630,8 +650,8 @@ class NMEAHandler:
             fields = data.split(',')
             timestamp = datetime.datetime.now().isoformat()
             
-            # WIMWV - Wind Speed and Angle (Relative or True)
-            if msg_type == 'WIMWV':
+            # MWV / WIMWV - Wind Speed and Angle (Relative or True)
+            if msg_type in ('MWV', 'WIMWV'):
                 # $WIMWV,angle,R/T,speed,unit,status*CC
                 if len(fields) >= 6 and fields[5] == 'A':  # Valid data
                     angle = float(fields[1]) if fields[1] else None
@@ -652,8 +672,8 @@ class NMEAHandler:
                         self.sensor_data['wind_true']['timestamp'] = timestamp
                         self._record_history('wind_true_speed', speed)
             
-            # WIMWD - Wind Direction and Speed (True, relative to north)
-            elif msg_type == 'WIMWD':
+            # MWD / WIMWD - Wind Direction and Speed (True, relative to north)
+            elif msg_type in ('MWD', 'WIMWD'):
                 # $WIMWD,dir_true,T,dir_mag,M,speed_kts,N,speed_ms,M*CC
                 if len(fields) >= 8:
                     dir_true = float(fields[1]) if fields[1] else None
@@ -674,8 +694,8 @@ class NMEAHandler:
                     if speed_kts is not None:
                         self.ws_broadcast('wind-speed-kts', round(speed_kts, 1))
             
-            # WIMDA - Meteorological Composite
-            elif msg_type == 'WIMDA':
+            # MDA / WIMDA - Meteorological Composite
+            elif msg_type in ('MDA', 'WIMDA'):
                 # $WIMDA,baro_in,I,baro_bar,B,air_temp,C,water_temp,C,humidity,%,dew_point,C,...
                 if len(fields) >= 12:
                     pressure_bar = float(fields[3]) if fields[3] else None
@@ -693,8 +713,8 @@ class NMEAHandler:
                     self._record_history('humidity', humidity)
                     self._record_history('pressure', pressure_bar)
             
-            # HCHDT - Heading True
-            elif msg_type == 'HCHDT':
+            # HDT / HCHDT / GNHDT - Heading True
+            elif msg_type in ('HDT', 'HCHDT'):
                 # $HCHDT,heading,T*CC
                 if len(fields) >= 2 and fields[1]:
                     heading = float(fields[1])
@@ -704,8 +724,8 @@ class NMEAHandler:
                     self._record_history('heading', heading)
                     self.ws_broadcast('heading-true', round(heading, 1))
             
-            # HCHDG / CHDG - Heading Magnetic
-            elif msg_type in ('HCHDG', 'CHDG'):
+            # HDG / HCHDG / CHDG - Heading Magnetic
+            elif msg_type in ('HDG', 'HCHDG', 'CHDG'):
                 # $HCHDG,heading,dev,E/W,var,E/W*CC
                 if len(fields) >= 2 and fields[1]:
                     heading = float(fields[1])
@@ -714,8 +734,8 @@ class NMEAHandler:
                         self.sensor_data['attitude']['source'] = msg_type
                         self.sensor_data['attitude']['timestamp'] = timestamp
             
-            # YXXDR - Transducer Measurements (Pitch/Roll from type B)
-            elif msg_type == 'YXXDR':
+            # XDR / YXXDR - Transducer Measurements (Pitch/Roll from type B)
+            elif msg_type in ('XDR', 'YXXDR'):
                 # Parse in groups of 4: type, value, unit, name
                 i = 1
                 while i + 3 < len(fields):
@@ -736,8 +756,8 @@ class NMEAHandler:
                             self._record_history('roll', value)
                     i += 4
             
-            # TIROT - Rate of Turn
-            elif msg_type == 'TIROT':
+            # ROT / TIROT - Rate of Turn
+            elif msg_type in ('ROT', 'TIROT'):
                 # $TIROT,rate,status*CC
                 if len(fields) >= 3 and fields[2] == 'A' and fields[1]:
                     rate = float(fields[1])
@@ -747,8 +767,8 @@ class NMEAHandler:
                         self.sensor_data['attitude']['source'] = 'TIROT'
                         self.sensor_data['attitude']['timestamp'] = timestamp
             
-            # GPGGA - GPS Fix Data
-            elif msg_type == 'GPGGA':
+            # GGA / GPGGA / GNGGA - GPS Fix Data
+            elif msg_type in ('GGA', 'GPGGA', 'GNGGA'):
                 # $GPGGA,time,lat,N/S,lon,E/W,quality,sats,hdop,alt,M,...
                 if len(fields) >= 10:
                     lat = self._parse_nmea_coord(fields[2], fields[3]) if fields[2] else None
@@ -764,7 +784,7 @@ class NMEAHandler:
                     self.sensor_data['gps']['fix_quality'] = quality_names.get(fix_quality, str(fix_quality))
                     self.sensor_data['gps']['satellites'] = satellites
                     self.sensor_data['gps']['altitude_m'] = altitude
-                    self.sensor_data['gps']['source'] = 'GPGGA'
+                    self.sensor_data['gps']['source'] = 'GGA'
                     self.sensor_data['gps']['timestamp'] = timestamp
                     self._record_history('satellites', satellites)
                     if lat is not None:
@@ -776,8 +796,8 @@ class NMEAHandler:
                     self.ws_broadcast('gps-satellites', satellites)
                     self.ws_broadcast('gps-fix-quality', fix_quality)
             
-            # GPVTG - Course Over Ground and Ground Speed
-            elif msg_type == 'GPVTG':
+            # VTG / GPVTG / GNVTG - Course Over Ground and Ground Speed
+            elif msg_type in ('VTG', 'GPVTG', 'GNVTG'):
                 # $GPVTG,track_true,T,track_mag,M,speed_kts,N,speed_kmh,K,mode*CC
                 if len(fields) >= 6:
                     course = float(fields[1]) if fields[1] else None
@@ -791,13 +811,13 @@ class NMEAHandler:
                         self.ws_broadcast('gps-course-true', round(course, 1))
                     if speed_kts is not None:
                         self.ws_broadcast('gps-speed-kts', round(speed_kts, 1))
-                    if self.sensor_data['gps']['source'] != 'GPGGA':
-                        self.sensor_data['gps']['source'] = 'GPVTG'
+                    if self.sensor_data['gps']['source'] != 'GGA':
+                        self.sensor_data['gps']['source'] = 'VTG'
                         self.sensor_data['gps']['timestamp'] = timestamp
             
-            # GPZDA - Time and Date
-            elif msg_type == 'GPZDA':
-                # $GPZDA,hhmmss,dd,mm,yyyy,tz_h,tz_m*CC
+            # ZDA / GPZDA / GNZDA - Time and Date
+            elif msg_type in ('ZDA', 'GPZDA', 'GNZDA'):
+                # $--ZDA,hhmmss,dd,mm,yyyy,tz_h,tz_m*CC
                 if len(fields) >= 5:
                     time_str = fields[1]
                     day = fields[2]
@@ -812,7 +832,7 @@ class NMEAHandler:
                         utc_date = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
                         self.sensor_data['time']['utc_date'] = utc_date
                     
-                    self.sensor_data['time']['source'] = 'GPZDA'
+                    self.sensor_data['time']['source'] = 'ZDA'
                     self.sensor_data['time']['timestamp'] = timestamp
                     
         except Exception as e:
@@ -1181,7 +1201,8 @@ class NMEAHandler:
                     data = conn.readline().decode('utf-8', errors='ignore').strip()
                     if self._incoming_line_checksum_valid(data):
                         valid_count += 1
-                        msg_type = data.split(',')[0][1:]
+                        addr = data.split(',')[0].lstrip('$!').strip()
+                        msg_type = self._nmea_sentence_formatter(addr)
                         self.app_logger.debug(f"NMEA at {baud_rate}: {msg_type} ({valid_count}/{min_messages})")
                         if valid_count >= min_messages:
                             return True, conn
