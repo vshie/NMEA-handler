@@ -350,6 +350,9 @@
     .heatmap-svg-box {
       width: 100%;
     }
+    .wind-heatmap-col {
+      min-width: 0;
+    }
     .heatmap-svg-box svg {
       display: block;
       width: 100%;
@@ -1083,8 +1086,8 @@
                     <v-alert v-else type="info" dense class="mb-4">
                       No paired wind samples in the last {{ windHistoryWindowMinutes }} min yet (need valid MWV relative and/or true, or MWD with direction and speed).
                     </v-alert>
-                    <v-row v-if="windHeatmapChartApparent || windHeatmapChartTrue">
-                      <v-col v-if="windHeatmapChartApparent" cols="12" class="pb-4 pb-md-5">
+                    <v-row v-if="windHeatmapChartApparent || windHeatmapChartTrue" class="mb-2 mb-md-4">
+                      <v-col v-if="windHeatmapChartApparent" cols="12" :md="windHeatmapMd" class="wind-heatmap-col pb-4">
                         <v-card outlined class="wind-viz-card">
                           <v-card-title class="text-subtitle-2 py-2">Apparent wind speed vs time (last {{ windHistoryWindowMinutes }} min)</v-card-title>
                           <v-card-subtitle class="text-caption pb-0 pt-0 px-4 grey--text">
@@ -1126,7 +1129,7 @@
                           </v-card-text>
                         </v-card>
                       </v-col>
-                      <v-col v-if="windHeatmapChartTrue" cols="12">
+                      <v-col v-if="windHeatmapChartTrue" cols="12" :md="windHeatmapMd" class="wind-heatmap-col pb-4">
                         <v-card outlined class="wind-viz-card">
                           <v-card-title class="text-subtitle-2 py-2">True wind speed vs time (last {{ windHistoryWindowMinutes }} min)</v-card-title>
                           <v-card-subtitle class="text-caption pb-0 pt-0 px-4 grey--text">
@@ -2057,6 +2060,9 @@
         },
         windRoseMd() {
           return this.windRoseChartApparent && this.windRoseChartTrue ? 6 : 12;
+        },
+        windHeatmapMd() {
+          return this.windHeatmapChartApparent && this.windHeatmapChartTrue ? 6 : 12;
         },
         dashboardWindApparentVisible() {
           const w = this.sensorData.wind_apparent;
