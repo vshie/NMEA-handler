@@ -265,6 +265,9 @@ class NMEAHandler:
         nmea_fh.setFormatter(nmea_formatter)
         self.nmea_logger.addHandler(nmea_fh)
         self.nmea_logger.setLevel(logging.INFO)
+        # Per-line NMEA must not propagate to the root logger (avoids flooding
+        # BlueOS extension / container logs at INFO for every sentence).
+        self.nmea_logger.propagate = False
         
         # Set up file handler for application logs
         app_log_path = log_dir / '300wx.log'

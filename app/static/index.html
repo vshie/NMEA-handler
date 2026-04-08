@@ -343,6 +343,10 @@
     .heatmap-wrap {
       width: 100%;
     }
+    /* Edge-to-edge heatmap inside the card (Vuetify v-card-text adds padding by default). */
+    .wind-viz-card .heatmap-viz-text {
+      padding: 12px 0 0 0 !important;
+    }
     .heatmap-svg-box {
       width: 100%;
     }
@@ -1086,7 +1090,7 @@
                           <v-card-subtitle class="text-caption pb-0 pt-0 px-4 grey--text">
                             Resolution depends on sentence rate. Rows: 2 kt bins; time older (left) → newer (right).
                           </v-card-subtitle>
-                          <v-card-text>
+                          <v-card-text class="heatmap-viz-text">
                             <div class="heatmap-wrap">
                               <div class="heatmap-svg-box" :style="heatmapSvgBoxStyle(windHeatmapChartApparent)">
                               <svg
@@ -1117,7 +1121,7 @@
                                 <text :x="36 + windHeatmapChartApparent.plotW / 2" :y="windHeatmapChartApparent.plotH + 22" text-anchor="middle" font-size="9" fill="#757575">older ← · → newer</text>
                               </svg>
                               </div>
-                              <div class="text-caption grey--text mt-1">Darker = more samples (max {{ windHeatmapChartApparent.maxCount }}).</div>
+                              <div class="text-caption grey--text mt-1 px-4 pb-3">Darker = more samples (max {{ windHeatmapChartApparent.maxCount }}).</div>
                             </div>
                           </v-card-text>
                         </v-card>
@@ -1128,7 +1132,7 @@
                           <v-card-subtitle class="text-caption pb-0 pt-0 px-4 grey--text">
                             Same layout as apparent; data from MWV <strong>T</strong> and/or MWD when speed and direction are both present.
                           </v-card-subtitle>
-                          <v-card-text>
+                          <v-card-text class="heatmap-viz-text">
                             <div class="heatmap-wrap">
                               <div class="heatmap-svg-box" :style="heatmapSvgBoxStyle(windHeatmapChartTrue)">
                               <svg
@@ -1159,7 +1163,7 @@
                                 <text :x="36 + windHeatmapChartTrue.plotW / 2" :y="windHeatmapChartTrue.plotH + 22" text-anchor="middle" font-size="9" fill="#757575">older ← · → newer</text>
                               </svg>
                               </div>
-                              <div class="text-caption grey--text mt-1">Darker = more samples (max {{ windHeatmapChartTrue.maxCount }}).</div>
+                              <div class="text-caption grey--text mt-1 px-4 pb-3">Darker = more samples (max {{ windHeatmapChartTrue.maxCount }}).</div>
                             </div>
                           </v-card-text>
                         </v-card>
