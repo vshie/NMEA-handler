@@ -6,7 +6,7 @@ A BlueOS extension for the Airmar 300WX WeatherStation. Connects via NMEA 0183 s
 
 - Automatic serial port detection and baud rate negotiation (4800 → 115200, default saved on device)
 - **Auto-reconnect on extension restart**: last serial port, baud hint, and “stay at 4800” preference are stored in `state.json` under the mounted logs directory; a background thread connects at startup without using the UI. **Disconnect** in the UI clears the saved port so the next restart will scan ports instead.
-- Real-time dashboard with wind, heading, atmosphere, GPS, and attitude data (including an apparent-wind rose and speed–time heatmap; UI idea partly inspired by [Brian Jackson’s weather-station dashboard article](https://medium.com/@jaxzin/how-i-turned-a-cheap-weather-station-into-a-personal-devops-dashboard-5c8820790fd5))
+- Real-time dashboard with wind, heading, atmosphere, GPS, and attitude data (including apparent/true wind roses and speed–time heatmaps)
 - Sparkline history graphs for all sensor channels
 - Per-sentence enable/disable and transmission interval control
 - Bandwidth usage indicator (percentage of serial bus capacity)

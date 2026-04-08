@@ -898,7 +898,15 @@ class NMEAHandler:
                 {'t': round(now - entry['t']), 'v': entry['v']}
                 for entry in entries
             ]
+        result['history_window_seconds'] = int(self.history_duration)
         return result
+
+    def reset_wind_paired_history(self, which):
+        """Clear paired samples used for wind roses / heatmaps (``apparent`` or ``true``)."""
+        if which == 'apparent':
+            self.sensor_history['wind_apparent_paired'] = []
+        elif which == 'true':
+            self.sensor_history['wind_true_paired'] = []
 
     def _parse_nmea_coord(self, coord_str, direction):
         """Convert NMEA coordinate (DDMM.MMMM) to decimal degrees."""
@@ -2027,6 +2035,17 @@ def get_sensor_state():
 def get_sensor_history():
     """Get historical sensor data for sparklines (15 min)"""
     return jsonify(nmea_handler.get_sensor_history())
+
+
+@app.route('/api/sensor/history/reset-wind-paired', methods=['POST'])
+def reset_wind_paired_history():
+    """Clear apparent or true paired wind history (roses and heatmaps for that stream)."""
+    data = request.get_json() or {}
+    which = data.get('which', '')
+    if which not in ('apparent', 'true'):
+        return jsonify({'error': 'which must be "apparent" or "true"'}), 400
+    nmea_handler.reset_wind_paired_history(which)
+    return jsonify({'ok': True})
 
 # ============== Sentence Configuration API ==============
 

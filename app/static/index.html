@@ -341,7 +341,18 @@
       fill: #666;
     }
     .heatmap-wrap {
-      overflow-x: auto;
+      width: 100%;
+    }
+    .heatmap-svg-box {
+      width: 100%;
+    }
+    .heatmap-svg-box svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    .wind-rose-card--compact .v-card__subtitle {
+      line-height: 1.25;
     }
   </style>
 </head>
@@ -1001,14 +1012,24 @@
                   <div v-if="connectionInfo.connected" class="mb-4">
                     <v-row v-if="windRoseChartApparent || windRoseChartTrue">
                       <v-col v-if="windRoseChartApparent" cols="12" :md="windRoseMd">
-                        <v-card outlined class="wind-viz-card">
-                          <v-card-title class="text-subtitle-2 py-2">Apparent wind rose (relative to bow)</v-card-title>
-                          <v-card-subtitle class="text-caption pb-0 pt-0 px-4 grey--text">
-                            MWV/WIMWV <strong>R</strong>: 0° = bow. N/E/S/W are bow-relative labels. Sector radius ∝ sum of speeds in that direction.
+                        <v-card outlined class="wind-viz-card wind-rose-card--compact">
+                          <v-card-title class="text-subtitle-2 py-1 d-flex flex-wrap align-center" style="gap: 8px;">
+                            <span class="pr-2">Apparent wind rose</span>
+                            <v-spacer></v-spacer>
+                            <v-chip small outlined class="grey--text">{{ windHistoryWindowMinutes }}-minute window</v-chip>
+                            <v-btn
+                              small
+                              outlined
+                              :loading="windPairedResetting === 'apparent'"
+                              @click="resetWindPaired('apparent')"
+                            >Clear</v-btn>
+                          </v-card-title>
+                          <v-card-subtitle class="text-caption pb-0 pt-0 px-3 grey--text">
+                            Relative to bow (MWV <strong>R</strong>): 0° = bow; each sector sums speeds from the last <strong>{{ windHistoryWindowMinutes }} min</strong>; radius ∝ that sum.
                           </v-card-subtitle>
-                          <v-card-text>
+                          <v-card-text class="py-2">
                             <div class="text-center">
-                              <svg class="wind-rose-svg" viewBox="0 0 200 200" width="220" height="220">
+                              <svg class="wind-rose-svg" viewBox="0 0 200 200" width="140" height="140">
                                 <circle cx="100" cy="100" r="88" fill="none" stroke="rgba(128,128,128,0.35)" />
                                 <g v-for="(sec, i) in windRoseChartApparent.sectors" :key="'rose-a-' + i">
                                   <path :d="sec.d" :fill="sec.fill" stroke="rgba(0,0,0,0.1)" stroke-width="0.4" />
@@ -1023,14 +1044,24 @@
                         </v-card>
                       </v-col>
                       <v-col v-if="windRoseChartTrue" cols="12" :md="windRoseMd">
-                        <v-card outlined class="wind-viz-card">
-                          <v-card-title class="text-subtitle-2 py-2">True wind rose (north‑referenced)</v-card-title>
-                          <v-card-subtitle class="text-caption pb-0 pt-0 px-4 grey--text">
-                            From MWV/WIMWV <strong>T</strong> and/or MWD/WIMWD: direction is where the wind comes <em>from</em> (meteorological). N/E/S/W = geographic.
+                        <v-card outlined class="wind-viz-card wind-rose-card--compact">
+                          <v-card-title class="text-subtitle-2 py-1 d-flex flex-wrap align-center" style="gap: 8px;">
+                            <span class="pr-2">True wind rose</span>
+                            <v-spacer></v-spacer>
+                            <v-chip small outlined class="grey--text">{{ windHistoryWindowMinutes }}-minute window</v-chip>
+                            <v-btn
+                              small
+                              outlined
+                              :loading="windPairedResetting === 'true'"
+                              @click="resetWindPaired('true')"
+                            >Clear</v-btn>
+                          </v-card-title>
+                          <v-card-subtitle class="text-caption pb-0 pt-0 px-3 grey--text">
+                            North‑referenced (MWV <strong>T</strong> / MWD): wind <em>from</em> direction over the last <strong>{{ windHistoryWindowMinutes }} min</strong>; N/E/S/W geographic.
                           </v-card-subtitle>
-                          <v-card-text>
+                          <v-card-text class="py-2">
                             <div class="text-center">
-                              <svg class="wind-rose-svg" viewBox="0 0 200 200" width="220" height="220">
+                              <svg class="wind-rose-svg" viewBox="0 0 200 200" width="140" height="140">
                                 <circle cx="100" cy="100" r="88" fill="none" stroke="rgba(128,128,128,0.35)" />
                                 <g v-for="(sec, i) in windRoseChartTrue.sectors" :key="'rose-t-' + i">
                                   <path :d="sec.d" :fill="sec.fill" stroke="rgba(0,0,0,0.1)" stroke-width="0.4" />
@@ -1046,22 +1077,21 @@
                       </v-col>
                     </v-row>
                     <v-alert v-else type="info" dense class="mb-4">
-                      No paired wind samples in the last 15 min yet (need valid MWV relative and/or true, or MWD with direction and speed).
+                      No paired wind samples in the last {{ windHistoryWindowMinutes }} min yet (need valid MWV relative and/or true, or MWD with direction and speed).
                     </v-alert>
                     <v-row v-if="windHeatmapChartApparent || windHeatmapChartTrue">
-                      <v-col v-if="windHeatmapChartApparent" cols="12" :md="windHeatmapMd">
+                      <v-col v-if="windHeatmapChartApparent" cols="12" class="pb-4 pb-md-5">
                         <v-card outlined class="wind-viz-card">
-                          <v-card-title class="text-subtitle-2 py-2">Apparent wind speed vs time (last 15 min)</v-card-title>
+                          <v-card-title class="text-subtitle-2 py-2">Apparent wind speed vs time (last {{ windHistoryWindowMinutes }} min)</v-card-title>
                           <v-card-subtitle class="text-caption pb-0 pt-0 px-4 grey--text">
                             Resolution depends on sentence rate. Rows: 2 kt bins; time older (left) → newer (right).
                           </v-card-subtitle>
                           <v-card-text>
                             <div class="heatmap-wrap">
+                              <div class="heatmap-svg-box" :style="heatmapSvgBoxStyle(windHeatmapChartApparent)">
                               <svg
-                                class="wind-heatmap-svg"
+                                preserveAspectRatio="none"
                                 :viewBox="'0 0 ' + (windHeatmapChartApparent.plotW + 40) + ' ' + (windHeatmapChartApparent.plotH + 28)"
-                                :width="Math.min(420, windHeatmapChartApparent.plotW + 40)"
-                                :height="windHeatmapChartApparent.plotH + 28"
                               >
                                 <g transform="translate(36, 6)">
                                   <rect
@@ -1086,24 +1116,24 @@
                                 >{{ lbl }}</text>
                                 <text :x="36 + windHeatmapChartApparent.plotW / 2" :y="windHeatmapChartApparent.plotH + 22" text-anchor="middle" font-size="9" fill="#757575">older ← · → newer</text>
                               </svg>
+                              </div>
                               <div class="text-caption grey--text mt-1">Darker = more samples (max {{ windHeatmapChartApparent.maxCount }}).</div>
                             </div>
                           </v-card-text>
                         </v-card>
                       </v-col>
-                      <v-col v-if="windHeatmapChartTrue" cols="12" :md="windHeatmapMd">
+                      <v-col v-if="windHeatmapChartTrue" cols="12">
                         <v-card outlined class="wind-viz-card">
-                          <v-card-title class="text-subtitle-2 py-2">True wind speed vs time (last 15 min)</v-card-title>
+                          <v-card-title class="text-subtitle-2 py-2">True wind speed vs time (last {{ windHistoryWindowMinutes }} min)</v-card-title>
                           <v-card-subtitle class="text-caption pb-0 pt-0 px-4 grey--text">
                             Same layout as apparent; data from MWV <strong>T</strong> and/or MWD when speed and direction are both present.
                           </v-card-subtitle>
                           <v-card-text>
                             <div class="heatmap-wrap">
+                              <div class="heatmap-svg-box" :style="heatmapSvgBoxStyle(windHeatmapChartTrue)">
                               <svg
-                                class="wind-heatmap-svg"
+                                preserveAspectRatio="none"
                                 :viewBox="'0 0 ' + (windHeatmapChartTrue.plotW + 40) + ' ' + (windHeatmapChartTrue.plotH + 28)"
-                                :width="Math.min(420, windHeatmapChartTrue.plotW + 40)"
-                                :height="windHeatmapChartTrue.plotH + 28"
                               >
                                 <g transform="translate(36, 6)">
                                   <rect
@@ -1128,29 +1158,24 @@
                                 >{{ lbl }}</text>
                                 <text :x="36 + windHeatmapChartTrue.plotW / 2" :y="windHeatmapChartTrue.plotH + 22" text-anchor="middle" font-size="9" fill="#757575">older ← · → newer</text>
                               </svg>
+                              </div>
                               <div class="text-caption grey--text mt-1">Darker = more samples (max {{ windHeatmapChartTrue.maxCount }}).</div>
                             </div>
                           </v-card-text>
                         </v-card>
                       </v-col>
                     </v-row>
-                    <p class="text-caption grey--text mb-0 mt-2">
-                      Inspired by
-                      <a href="https://medium.com/@jaxzin/how-i-turned-a-cheap-weather-station-into-a-personal-devops-dashboard-5c8820790fd5" target="_blank" rel="noopener noreferrer">Brian Jackson’s Grafana-oriented weather dashboard article</a>
-                      — similar views implemented here locally.
-                    </p>
                   </div>
                   
-                  <!-- Wind Section -->
-                  <div
-                    v-if="(sensorData.wind_apparent.speed_kts !== null || sensorData.wind_apparent.angle !== null) || (sensorData.wind_true.speed_kts !== null || sensorData.wind_true.angle !== null || sensorData.wind_true.direction_true !== null || sensorData.wind_true.direction_magnetic !== null)"
-                    class="text-overline mb-2"
-                  >Wind</div>
-                  <v-row
-                    v-if="(sensorData.wind_apparent.speed_kts !== null || sensorData.wind_apparent.angle !== null) || (sensorData.wind_true.speed_kts !== null || sensorData.wind_true.angle !== null || sensorData.wind_true.direction_true !== null || sensorData.wind_true.direction_magnetic !== null)"
-                    class="mb-4"
-                  >
-                    <v-col cols="12" md="6" v-if="sensorData.wind_apparent.speed_kts !== null || sensorData.wind_apparent.angle !== null">
+                  <!-- Wind + Atmosphere (one row on md+ when both groups have data) -->
+                  <template v-if="dashboardHasWindTiles || dashboardHasAtmosphereTiles">
+                    <div class="d-flex flex-wrap align-baseline mb-2" style="gap: 10px;">
+                      <span v-if="dashboardHasWindTiles" class="text-overline">Wind</span>
+                      <span v-if="dashboardHasWindTiles && dashboardHasAtmosphereTiles" class="text-caption grey--text">·</span>
+                      <span v-if="dashboardHasAtmosphereTiles" class="text-overline">Atmosphere</span>
+                    </div>
+                    <v-row class="mb-4">
+                    <v-col cols="6" :md="dashboardEnvColMd" v-if="dashboardWindApparentVisible">
                       <div class="sensor-tile">
                         <v-icon 
                           class="sparkline-toggle" 
@@ -1182,7 +1207,7 @@
                         </div>
                       </div>
                     </v-col>
-                    <v-col cols="12" md="6" v-if="sensorData.wind_true.speed_kts !== null || sensorData.wind_true.angle !== null || sensorData.wind_true.direction_true !== null || sensorData.wind_true.direction_magnetic !== null">
+                    <v-col cols="6" :md="dashboardEnvColMd" v-if="dashboardWindTrueVisible">
                       <div class="sensor-tile">
                         <v-icon 
                           class="sparkline-toggle" 
@@ -1213,18 +1238,7 @@
                         </div>
                       </div>
                     </v-col>
-                  </v-row>
-
-                  <!-- Atmosphere Section -->
-                  <div
-                    v-if="sensorData.atmosphere.temperature_c !== null || sensorData.atmosphere.humidity_pct !== null || sensorData.atmosphere.pressure_bar !== null || sensorData.atmosphere.dew_point_c !== null"
-                    class="text-overline mb-2"
-                  >Atmosphere</div>
-                  <v-row
-                    v-if="sensorData.atmosphere.temperature_c !== null || sensorData.atmosphere.humidity_pct !== null || sensorData.atmosphere.pressure_bar !== null || sensorData.atmosphere.dew_point_c !== null"
-                    class="mb-4"
-                  >
-                    <v-col cols="6" md="3" v-if="sensorData.atmosphere.temperature_c !== null">
+                    <v-col cols="6" :md="dashboardEnvColMd" v-if="sensorData.atmosphere.temperature_c !== null">
                       <div class="sensor-tile">
                         <v-icon class="sparkline-toggle" small @click="toggleSparkline('temperature')" :color="sparklineVisible.temperature ? 'primary' : 'grey'">mdi-chart-line</v-icon>
                         <div class="sensor-tile-header">
@@ -1243,7 +1257,7 @@
                         </div>
                       </div>
                     </v-col>
-                    <v-col cols="6" md="3" v-if="sensorData.atmosphere.humidity_pct !== null">
+                    <v-col cols="6" :md="dashboardEnvColMd" v-if="sensorData.atmosphere.humidity_pct !== null">
                       <div class="sensor-tile">
                         <v-icon class="sparkline-toggle" small @click="toggleSparkline('humidity')" :color="sparklineVisible.humidity ? 'primary' : 'grey'">mdi-chart-line</v-icon>
                         <div class="sensor-tile-header">
@@ -1262,7 +1276,7 @@
                         </div>
                       </div>
                     </v-col>
-                    <v-col cols="6" md="3" v-if="sensorData.atmosphere.pressure_bar !== null">
+                    <v-col cols="6" :md="dashboardEnvColMd" v-if="sensorData.atmosphere.pressure_bar !== null">
                       <div class="sensor-tile">
                         <v-icon class="sparkline-toggle" small @click="toggleSparkline('pressure')" :color="sparklineVisible.pressure ? 'primary' : 'grey'">mdi-chart-line</v-icon>
                         <div class="sensor-tile-header">
@@ -1281,7 +1295,7 @@
                         </div>
                       </div>
                     </v-col>
-                    <v-col cols="6" md="3" v-if="sensorData.atmosphere.dew_point_c !== null">
+                    <v-col cols="6" :md="dashboardEnvColMd" v-if="sensorData.atmosphere.dew_point_c !== null">
                       <div class="sensor-tile">
                         <div class="sensor-tile-header">
                           <span class="sensor-tile-title">Dew Point</span>
@@ -1293,7 +1307,8 @@
                         <span class="sensor-tile-unit">{{ temperatureUnit }}</span>
                       </div>
                     </v-col>
-                  </v-row>
+                    </v-row>
+                  </template>
 
                   <!-- Attitude Section -->
                   <div
@@ -1849,6 +1864,7 @@
         unitSystem: 'metric',  // 'metric' or 'imperial'
         // Sparklines
         sensorHistory: {},
+        windPairedResetting: null,
         sparklineVisible: {
           wind_apparent_speed: false,
           wind_apparent_angle: false,
@@ -2016,6 +2032,13 @@
             ? this.sensorHistory.wind_true_paired
             : [];
         },
+        windHistoryWindowSeconds() {
+          const s = this.sensorHistory.history_window_seconds;
+          return typeof s === 'number' && s > 0 ? s : 900;
+        },
+        windHistoryWindowMinutes() {
+          return Math.round(this.windHistoryWindowSeconds / 60);
+        },
         windRoseChartApparent() {
           return this.buildWindRoseChart(this.windApparentPairedSamples, 200);
         },
@@ -2031,8 +2054,34 @@
         windRoseMd() {
           return this.windRoseChartApparent && this.windRoseChartTrue ? 6 : 12;
         },
-        windHeatmapMd() {
-          return this.windHeatmapChartApparent && this.windHeatmapChartTrue ? 6 : 12;
+        dashboardWindApparentVisible() {
+          const w = this.sensorData.wind_apparent;
+          return w.speed_kts !== null || w.angle !== null;
+        },
+        dashboardWindTrueVisible() {
+          const w = this.sensorData.wind_true;
+          return w.speed_kts !== null || w.angle !== null || w.direction_true !== null || w.direction_magnetic !== null;
+        },
+        dashboardHasWindTiles() {
+          return this.dashboardWindApparentVisible || this.dashboardWindTrueVisible;
+        },
+        dashboardHasAtmosphereTiles() {
+          const a = this.sensorData.atmosphere;
+          return a.temperature_c !== null || a.humidity_pct !== null || a.pressure_bar !== null || a.dew_point_c !== null;
+        },
+        dashboardWindTileCount() {
+          let n = 0;
+          if (this.dashboardWindApparentVisible) n++;
+          if (this.dashboardWindTrueVisible) n++;
+          return n;
+        },
+        dashboardEnvColMd() {
+          if (this.dashboardHasWindTiles && this.dashboardHasAtmosphereTiles) return 2;
+          if (this.dashboardHasAtmosphereTiles) return 3;
+          if (this.dashboardHasWindTiles) {
+            return this.dashboardWindTileCount === 2 ? 6 : 12;
+          }
+          return 3;
         }
       },
       watch: {
@@ -2095,7 +2144,7 @@
         buildWindHeatmapChart(samples, hue, sat) {
           if (!samples || !samples.length) return null;
           sat = sat == null ? 75 : sat;
-          const TIME_SEC = 900;
+          const TIME_SEC = this.windHistoryWindowSeconds;
           const timeBins = 48;
           const bucketT = TIME_SEC / timeBins;
           const speedBinKts = 2;
@@ -2126,8 +2175,8 @@
             }
           }
           maxC = Math.max(maxC, 1);
-          const plotW = 200;
-          const cellH = 12;
+          const plotW = 768;
+          const cellH = 14;
           const plotH = numSpeedBins * cellH;
           const cellW = plotW / timeBins;
           const cells = [];
@@ -2354,12 +2403,32 @@
             console.error('Error fetching sensor history:', error);
           }
         },
+        heatmapSvgBoxStyle(chart) {
+          if (!chart) return {};
+          const w = chart.plotW + 40;
+          const h = chart.plotH + 28;
+          return {
+            width: '100%',
+            aspectRatio: w + ' / ' + h
+          };
+        },
+        async resetWindPaired(which) {
+          this.windPairedResetting = which;
+          try {
+            await axios.post('/api/sensor/history/reset-wind-paired', { which: which });
+            await this.fetchSensorHistory();
+          } catch (error) {
+            console.error('Error resetting wind paired history:', error);
+          } finally {
+            this.windPairedResetting = null;
+          }
+        },
         toggleSparkline(key) {
           this.sparklineVisible[key] = !this.sparklineVisible[key];
         },
         getSparklinePath(key) {
           const data = this.sensorHistory[key];
-          if (!data || data.length < 2) return '';
+          if (!Array.isArray(data) || data.length < 2) return '';
           
           // Sort by time (oldest first, t is seconds ago so higher = older)
           const sorted = [...data].sort((a, b) => b.t - a.t);
@@ -2386,7 +2455,7 @@
         },
         getSparklineArea(key) {
           const data = this.sensorHistory[key];
-          if (!data || data.length < 2) return '';
+          if (!Array.isArray(data) || data.length < 2) return '';
           
           const sorted = [...data].sort((a, b) => b.t - a.t);
           const values = sorted.map(d => d.v);
@@ -2410,7 +2479,8 @@
           return `M${firstX},${height} L${points.join(' L')} L${lastX},${height} Z`;
         },
         hasSparklineData(key) {
-          return this.sensorHistory[key] && this.sensorHistory[key].length >= 2;
+          const data = this.sensorHistory[key];
+          return Array.isArray(data) && data.length >= 2;
         },
         async downloadAppLogs() {
           try {
