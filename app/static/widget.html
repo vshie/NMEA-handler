@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wind widget</title>
+  <style>
+    :root {
+      --bg: #121212;
+      --surface: #1e1e1e;
+      --text: #e8e8e8;
+      --muted: #9e9e9e;
+      --accent: #4fc3f7;
+      --border: rgba(255, 255, 255, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100dvh;
+    }
+    .shell {
+      max-width: 400px;
+      margin: 0 auto;
+      min-height: 100dvh;
+      padding: 12px 14px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .seg {
+      display: flex;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .seg button {
+      flex: 1;
+      padding: 10px 12px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .seg button[aria-pressed="true"] {
+      background: rgba(79, 195, 247, 0.18);
+      color: var(--accent);
+    }
+    .rose-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      text-align: center;
+    }
+    .rose-caption {
+      font-size: 0.7rem;
+      color: var(--muted);
+      margin-bottom: 8px;
+      line-height: 1.35;
+    }
+    .wind-rose-svg text {
+      fill: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .empty-rose {
+      color: var(--muted);
+      font-size: 0.8rem;
+      padding: 32px 12px;
+    }
+    .stale {
+      font-size: 0.7rem;
+      color: #ffb74d;
+      text-align: center;
+      margin: -4px 0 0;
+    }
+    table.data {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    table.data th {
+      text-align: left;
+      padding: 8px 10px;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      border-bottom: 1px solid var(--border);
+      background: rgba(0, 0, 0, 0.2);
+    }
+    table.data td {
+      padding: 7px 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    table.data tr:last-child td { border-bottom: none; }
+    table.data td:first-child { color: var(--muted); }
+    table.data td:last-child {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace;
+      font-weight: 500;
+    }
+    .conn {
+      font-size: 0.65rem;
+      color: var(--muted);
+      text-align: center;
+    }
+    .conn.error { color: #ef5350; }
+    .history-hint.err { color: #ef5350; }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="seg" role="group" aria-label="Wind rose reference">
+      <button type="button" id="btn-apparent" aria-pressed="true">Apparent</button>
+      <button type="button" id="btn-true" aria-pressed="false">True</button>
+    </div>
+    <p class="stale" id="stale-hint" hidden></p>
+    <div class="rose-wrap">
+      <div class="rose-caption" id="rose-caption">
+        Bow-relative apparent wind (MWV R). Rose uses samples from the last window below.
+      </div>
+      <div id="rose-container"></div>
+      <div class="conn" id="history-hint"></div>
+    </div>
+    <table class="data" id="data-table" aria-label="Live readouts">
+      <tbody id="data-body"></tbody>
+    </table>
+    <p class="conn" id="conn-status">Connecting…</p>
+  </div>
+  <script>
+(function () {
+  const STALE_SEC = 15;
+  const HISTORY_POLL_MS = 4000;
+
+  const defaultSensor = () => ({
+    wind_apparent: { speed_kts: null, angle: null, source: null, timestamp: null },
+    wind_true: {
+      speed_kts: null, angle: null, direction_true: null, direction_magnetic: null,
+      source: null, timestamp: null
+    },
+    attitude: {
+      heading_true: null, heading_magnetic: null, source: null, timestamp: null
+    },
+    gps: {
+      course_true: null, speed_kts: null, source: null, timestamp: null
+    }
+  });
+
+  let sensorData = defaultSensor();
+  let roseMode = 'apparent';
+  let history = { wind_apparent_paired: [], wind_true_paired: [], history_window_seconds: 900 };
+  let es = null;
+
+  function buildWindRoseChart(samples, hue) {
+    if (!samples || !samples.length) return null;
+    const N = 16;
+    const sums = Array(N).fill(0);
+    for (let i = 0; i < samples.length; i++) {
+      const s = samples[i];
+      let a = Number(s.angle);
+      if (!isFinite(a)) continue;
+      a = ((a % 360) + 360) % 360;
+      let idx = Math.floor(a / 22.5);
+      if (idx >= N) idx = N - 1;
+      sums[idx] += Number(s.speed) || 0;
+    }
+    const max = Math.max.apply(null, sums.concat([1e-6]));
+    const cx = 100;
+    const cy = 100;
+    const rMax = 82;
+    const sectors = [];
+    for (let i = 0; i < N; i++) {
+      const t = sums[i] / max;
+      const r = rMax * Math.sqrt(t);
+      const d0 = (i * 22.5 * Math.PI) / 180;
+      const d1 = ((i + 1) * 22.5 * Math.PI) / 180;
+      const x0 = cx + r * Math.sin(d0);
+      const y0 = cy - r * Math.cos(d0);
+      const x1 = cx + r * Math.sin(d1);
+      const y1 = cy - r * Math.cos(d1);
+      const L = Math.round(24 + 46 * t);
+      const fill = 'hsl(' + hue + ', 78%, ' + L + '%)';
+      sectors.push({
+        d: 'M ' + cx + ' ' + cy + ' L ' + x0.toFixed(2) + ' ' + y0.toFixed(2) +
+          ' A ' + r.toFixed(2) + ' ' + r.toFixed(2) + ' 0 0 1 ' + x1.toFixed(2) + ' ' + y1.toFixed(2) + ' Z',
+        fill: fill
+      });
+    }
+    return { sectors: sectors, maxSum: max };
+  }
+
+  function parseTs(iso) {
+    if (!iso) return null;
+    const ms = Date.parse(iso);
+    return isFinite(ms) ? ms : null;
+  }
+
+  function staleHint() {
+    const el = document.getElementById('stale-hint');
+    const now = Date.now();
+    const candidates = [
+      parseTs(sensorData.wind_apparent.timestamp),
+      parseTs(sensorData.wind_true.timestamp),
+      parseTs(sensorData.attitude.timestamp),
+      parseTs(sensorData.gps.timestamp)
+    ].filter(Boolean);
+    if (!candidates.length) {
+      el.hidden = true;
+      return;
+    }
+    const newest = Math.max.apply(null, candidates);
+    if (now - newest > STALE_SEC * 1000) {
+      el.textContent = 'Live data may be stale (no recent sentence).';
+      el.hidden = false;
+    } else {
+      el.hidden = true;
+    }
+  }
+
+  function renderRose() {
+    const container = document.getElementById('rose-container');
+    const caption = document.getElementById('rose-caption');
+    const hint = document.getElementById('history-hint');
+    const winMin = Math.round((history.history_window_seconds || 900) / 60);
+    hint.textContent = winMin ? winMin + '-minute rose window' : '';
+    hint.classList.remove('err');
+
+    if (roseMode === 'apparent') {
+      caption.textContent =
+        'Bow-relative apparent wind (MWV R). Rose: wind from direction in bow coordinates.';
+    } else {
+      caption.textContent =
+        'North-referenced true wind (MWV T / MWD). Rose: geographic wind-from direction (N/E/S/W).';
+    }
+
+    const samples = roseMode === 'apparent'
+      ? history.wind_apparent_paired
+      : history.wind_true_paired;
+    const hue = roseMode === 'apparent' ? 200 : 285;
+    const chart = buildWindRoseChart(samples, hue);
+
+    if (!chart) {
+      container.innerHTML = '<div class="empty-rose">No paired wind samples in the last ' +
+        winMin + ' min yet.</div>';
+      return;
+    }
+
+    const paths = chart.sectors.map(function (sec, i) {
+      return '<path d="' + sec.d + '" fill="' + sec.fill +
+        '" stroke="rgba(0,0,0,0.18)" stroke-width="0.65" />';
+    }).join('');
+
+    container.innerHTML =
+      '<svg class="wind-rose-svg" viewBox="0 0 200 200" width="100%" style="max-width:220px;height:auto" aria-hidden="true">' +
+      '<circle cx="100" cy="100" r="88" fill="none" stroke="rgba(120,120,120,0.45)" stroke-width="1.25" />' +
+      '<g>' + paths + '</g>' +
+      '<text x="100" y="16" text-anchor="middle">N</text>' +
+      '<text x="186" y="104" text-anchor="middle">E</text>' +
+      '<text x="100" y="194" text-anchor="middle">S</text>' +
+      '<text x="14" y="104" text-anchor="middle">W</text>' +
+      '</svg>';
+  }
+
+  function fmtNum(v, decimals) {
+    if (v === null || v === undefined || !isFinite(Number(v))) return null;
+    return Number(v).toFixed(decimals);
+  }
+
+  function row(label, value, unit) {
+    if (value === null || value === undefined || value === '') return '';
+    return '<tr><td>' + label + '</td><td>' + value + (unit ? ' ' + unit : '') + '</td></tr>';
+  }
+
+  function renderTable() {
+    const tbody = document.getElementById('data-body');
+    const wa = sensorData.wind_apparent;
+    const wt = sensorData.wind_true;
+    const att = sensorData.attitude;
+    const gps = sensorData.gps;
+
+    const windParts = [];
+    const asp = fmtNum(wa.speed_kts, 1);
+    const aang = fmtNum(wa.angle, 1);
+    if (asp !== null) windParts.push(row('Apparent speed', asp, 'kts'));
+    if (aang !== null) windParts.push(row('Apparent angle', aang, '° (rel. bow)'));
+
+    const tsp = fmtNum(wt.speed_kts, 1);
+    const tang = fmtNum(wt.angle, 1);
+    const tdir = fmtNum(wt.direction_true, 1);
+    const tdm = fmtNum(wt.direction_magnetic, 1);
+    if (tsp !== null) windParts.push(row('True speed', tsp, 'kts'));
+    if (tang !== null) windParts.push(row('True angle', tang, '° (rel. bow)'));
+    if (tdir !== null) windParts.push(row('True direction', tdir, '° (true)'));
+    if (tdm !== null) windParts.push(row('True dir. (mag.)', tdm, '°'));
+
+    const vesselParts = [];
+    const ht = fmtNum(att.heading_true, 1);
+    const hm = fmtNum(att.heading_magnetic, 1);
+    if (ht !== null) vesselParts.push(row('Heading', ht, '° true'));
+    else if (hm !== null) vesselParts.push(row('Heading', hm, '° mag'));
+
+    const cog = fmtNum(gps.course_true, 1);
+    const sog = fmtNum(gps.speed_kts, 1);
+    if (cog !== null) vesselParts.push(row('COG', cog, '°'));
+    if (sog !== null) vesselParts.push(row('SOG', sog, 'kts'));
+
+    const parts = [];
+    if (windParts.length) {
+      parts.push('<tr><th colspan="2">Wind</th></tr>');
+      parts.push.apply(parts, windParts);
+    }
+    if (vesselParts.length) {
+      parts.push('<tr><th colspan="2">Vessel</th></tr>');
+      parts.push.apply(parts, vesselParts);
+    }
+
+    tbody.innerHTML = parts.length
+      ? parts.join('')
+      : '<tr><td colspan="2" style="text-align:center;color:var(--muted)">No numeric data yet</td></tr>';
+  }
+
+  function mergeSensor(incoming) {
+    if (!incoming || typeof incoming !== 'object') return;
+    for (const key of Object.keys(defaultSensor())) {
+      if (incoming[key] && typeof incoming[key] === 'object') {
+        sensorData[key] = Object.assign({}, sensorData[key], incoming[key]);
+      }
+    }
+  }
+
+  async function fetchHistory() {
+    try {
+      const r = await fetch('/api/sensor/history');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      history.wind_apparent_paired = Array.isArray(data.wind_apparent_paired)
+        ? data.wind_apparent_paired : [];
+      history.wind_true_paired = Array.isArray(data.wind_true_paired)
+        ? data.wind_true_paired : [];
+      if (typeof data.history_window_seconds === 'number') {
+        history.history_window_seconds = data.history_window_seconds;
+      }
+      renderRose();
+    } catch (e) {
+      const hint = document.getElementById('history-hint');
+      hint.textContent = 'Rose history: ' + (e.message || 'unavailable');
+      hint.classList.add('err');
+    }
+  }
+
+  function connectSSE() {
+    const statusEl = document.getElementById('conn-status');
+    try {
+      es = new EventSource('/api/events');
+    } catch (e) {
+      statusEl.textContent = 'EventSource not available';
+      statusEl.classList.add('error');
+      return;
+    }
+
+    es.addEventListener('open', function () {
+      statusEl.textContent = 'Live';
+      statusEl.classList.remove('error');
+    });
+
+    es.addEventListener('init', function (ev) {
+      try {
+        const data = JSON.parse(ev.data);
+        if (data.sensor_data) mergeSensor(data.sensor_data);
+        renderTable();
+        staleHint();
+      } catch (err) { /* ignore */ }
+    });
+
+    es.addEventListener('sensor_data', function (ev) {
+      try {
+        mergeSensor(JSON.parse(ev.data));
+        renderTable();
+        staleHint();
+      } catch (err) { /* ignore */ }
+    });
+
+    es.onerror = function () {
+      statusEl.textContent = 'Stream disconnected — retrying…';
+      statusEl.classList.add('error');
+    };
+  }
+
+  document.getElementById('btn-apparent').addEventListener('click', function () {
+    roseMode = 'apparent';
+    document.getElementById('btn-apparent').setAttribute('aria-pressed', 'true');
+    document.getElementById('btn-true').setAttribute('aria-pressed', 'false');
+    renderRose();
+  });
+  document.getElementById('btn-true').addEventListener('click', function () {
+    roseMode = 'true';
+    document.getElementById('btn-apparent').setAttribute('aria-pressed', 'false');
+    document.getElementById('btn-true').setAttribute('aria-pressed', 'true');
+    renderRose();
+  });
+
+  renderRose();
+  renderTable();
+  connectSSE();
+  fetchHistory();
+  setInterval(fetchHistory, HISTORY_POLL_MS);
+})();
+  </script>
+</body>
+</html>

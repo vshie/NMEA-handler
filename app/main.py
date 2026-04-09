@@ -1931,6 +1931,11 @@ def index():
     """Serve the main page"""
     return send_from_directory(app.static_folder, 'index.html')
 
+@app.route('/widget')
+def widget_page():
+    """Narrow wind + navigation widget (embeddable)"""
+    return send_from_directory(app.static_folder, 'widget.html')
+
 @app.route('/register_service')
 def register_service():
     """Provide extension metadata to BlueOS"""
