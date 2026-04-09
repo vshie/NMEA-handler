@@ -2313,7 +2313,6 @@
           es.addEventListener('connection', (ev) => {
             try {
               this.connectionInfo = JSON.parse(ev.data);
-              if (!this.connectionInfo.connected) this.stopSse();
             } catch (e) {}
           });
         },

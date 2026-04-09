@@ -2335,4 +2335,5 @@ def change_baud():
 
 if __name__ == '__main__':
     from waitress import serve
-    serve(app, host='0.0.0.0', port=6436)
+    # SSE clients hold a worker thread each; >4 default threads avoids queue backlog.
+    serve(app, host='0.0.0.0', port=6436, threads=16)
