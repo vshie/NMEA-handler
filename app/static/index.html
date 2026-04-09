@@ -364,6 +364,9 @@
       height: auto;
       vertical-align: top;
     }
+    .wind-heatmap-axis-label {
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    }
     .wind-rose-card--compact .v-card__subtitle {
       line-height: 1.4;
       padding-top: 4px !important;
@@ -1108,7 +1111,7 @@
                                 class="wind-heatmap-fullwidth-svg"
                                 width="100%"
                                 preserveAspectRatio="none"
-                                :viewBox="'0 0 ' + (windHeatmapChartApparent.plotW + 40) + ' ' + (windHeatmapChartApparent.plotH + 28)"
+                                :viewBox="'0 0 ' + (windHeatmapChartApparent.plotW + 40) + ' ' + windHeatmapChartApparent.viewBoxHeatmapH"
                               >
                                 <g transform="translate(36, 6)">
                                   <rect
@@ -1131,7 +1134,45 @@
                                   font-size="8"
                                   fill="#757575"
                                 >{{ lbl }}</text>
-                                <text :x="36 + windHeatmapChartApparent.plotW / 2" :y="windHeatmapChartApparent.plotH + 22" text-anchor="middle" font-size="9" fill="#757575">older ← · → newer</text>
+                                <line
+                                  :x1="36"
+                                  :y1="windHeatmapChartApparent.axisY"
+                                  :x2="36 + windHeatmapChartApparent.plotW"
+                                  :y2="windHeatmapChartApparent.axisY"
+                                  stroke="rgba(0,0,0,0.35)"
+                                  stroke-width="1"
+                                />
+                                <line
+                                  v-for="(tk, i) in windHeatmapChartApparent.xTicksMinor"
+                                  :key="'xmin-a-' + i"
+                                  :x1="36 + tk.x"
+                                  :y1="windHeatmapChartApparent.axisY"
+                                  :x2="36 + tk.x"
+                                  :y2="windHeatmapChartApparent.axisY + 5"
+                                  stroke="rgba(0,0,0,0.28)"
+                                  stroke-width="1"
+                                />
+                                <line
+                                  v-for="(tk, i) in windHeatmapChartApparent.xTicksMajor"
+                                  :key="'xmaj-a-' + i"
+                                  :x1="36 + tk.x"
+                                  :y1="windHeatmapChartApparent.axisY"
+                                  :x2="36 + tk.x"
+                                  :y2="windHeatmapChartApparent.axisY + 9"
+                                  stroke="rgba(0,0,0,0.5)"
+                                  stroke-width="1.15"
+                                />
+                                <text
+                                  v-for="(tk, i) in windHeatmapChartApparent.xTicksMajor"
+                                  :key="'xlbl-a-' + i"
+                                  :x="36 + tk.x"
+                                  :y="windHeatmapChartApparent.axisY + 22"
+                                  text-anchor="middle"
+                                  font-size="10"
+                                  font-weight="600"
+                                  fill="rgba(0,0,0,0.72)"
+                                  class="wind-heatmap-axis-label"
+                                >{{ tk.label }}</text>
                               </svg>
                               <div class="text-caption grey--text mt-1 px-4 pb-3">
                                 Relative to bow (MWV <strong>R</strong>): 0° = bow; each sector sums speeds from the last <strong>{{ windHistoryWindowMinutes }} min</strong>; radius ∝ that sum.
@@ -1150,7 +1191,7 @@
                                 class="wind-heatmap-fullwidth-svg"
                                 width="100%"
                                 preserveAspectRatio="none"
-                                :viewBox="'0 0 ' + (windHeatmapChartTrue.plotW + 40) + ' ' + (windHeatmapChartTrue.plotH + 28)"
+                                :viewBox="'0 0 ' + (windHeatmapChartTrue.plotW + 40) + ' ' + windHeatmapChartTrue.viewBoxHeatmapH"
                               >
                                 <g transform="translate(36, 6)">
                                   <rect
@@ -1173,7 +1214,45 @@
                                   font-size="8"
                                   fill="#757575"
                                 >{{ lbl }}</text>
-                                <text :x="36 + windHeatmapChartTrue.plotW / 2" :y="windHeatmapChartTrue.plotH + 22" text-anchor="middle" font-size="9" fill="#757575">older ← · → newer</text>
+                                <line
+                                  :x1="36"
+                                  :y1="windHeatmapChartTrue.axisY"
+                                  :x2="36 + windHeatmapChartTrue.plotW"
+                                  :y2="windHeatmapChartTrue.axisY"
+                                  stroke="rgba(0,0,0,0.35)"
+                                  stroke-width="1"
+                                />
+                                <line
+                                  v-for="(tk, i) in windHeatmapChartTrue.xTicksMinor"
+                                  :key="'xmin-t-' + i"
+                                  :x1="36 + tk.x"
+                                  :y1="windHeatmapChartTrue.axisY"
+                                  :x2="36 + tk.x"
+                                  :y2="windHeatmapChartTrue.axisY + 5"
+                                  stroke="rgba(0,0,0,0.28)"
+                                  stroke-width="1"
+                                />
+                                <line
+                                  v-for="(tk, i) in windHeatmapChartTrue.xTicksMajor"
+                                  :key="'xmaj-t-' + i"
+                                  :x1="36 + tk.x"
+                                  :y1="windHeatmapChartTrue.axisY"
+                                  :x2="36 + tk.x"
+                                  :y2="windHeatmapChartTrue.axisY + 9"
+                                  stroke="rgba(0,0,0,0.5)"
+                                  stroke-width="1.15"
+                                />
+                                <text
+                                  v-for="(tk, i) in windHeatmapChartTrue.xTicksMajor"
+                                  :key="'xlbl-t-' + i"
+                                  :x="36 + tk.x"
+                                  :y="windHeatmapChartTrue.axisY + 22"
+                                  text-anchor="middle"
+                                  font-size="10"
+                                  font-weight="600"
+                                  fill="rgba(0,0,0,0.72)"
+                                  class="wind-heatmap-axis-label"
+                                >{{ tk.label }}</text>
                               </svg>
                               <div class="text-caption grey--text mt-1 px-4 pb-3">
                                 North‑referenced (MWV <strong>T</strong> / MWD). Heatmap: 2 kt rows, older left → newer right; darker = more samples (max {{ windHeatmapChartTrue.maxCount }}).
@@ -2220,6 +2299,31 @@
             const low = (numSpeedBins - 1 - yi) * speedBinKts;
             yLabels.push(low + '-' + (low + speedBinKts) + ' kt');
           }
+          const xFromSecondsAgo = (s) => {
+            const clamped = Math.max(0, Math.min(TIME_SEC, s));
+            return plotW * (TIME_SEC - clamped) / TIME_SEC;
+          };
+          const xTicksMajor = [];
+          for (let s = 0; s < TIME_SEC; s += 300) {
+            xTicksMajor.push({
+              x: xFromSecondsAgo(s),
+              label: s === 0 ? 'Now' : Math.round(s / 60) + ' min'
+            });
+          }
+          const lastMajorX = xTicksMajor.length ? xTicksMajor[xTicksMajor.length - 1].x : plotW;
+          if (lastMajorX > 1e-6) {
+            xTicksMajor.push({
+              x: 0,
+              label: Math.round(TIME_SEC / 60) + ' min'
+            });
+          }
+          const xTicksMinor = [];
+          for (let s = 60; s < TIME_SEC; s += 60) {
+            if (s % 300 === 0) continue;
+            xTicksMinor.push({ x: xFromSecondsAgo(s) });
+          }
+          const axisY = 6 + plotH;
+          const viewBoxHeatmapH = plotH + 40;
           return {
             cells: cells,
             plotW: plotW,
@@ -2229,7 +2333,11 @@
             numSpeedBins: numSpeedBins,
             speedBinKts: speedBinKts,
             maxCount: maxC,
-            yLabels: yLabels
+            yLabels: yLabels,
+            xTicksMajor: xTicksMajor,
+            xTicksMinor: xTicksMinor,
+            axisY: axisY,
+            viewBoxHeatmapH: viewBoxHeatmapH
           };
         },
         _seedLatestByType(messages) {
