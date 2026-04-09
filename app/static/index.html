@@ -338,8 +338,10 @@
       width: 100%;
     }
     .wind-rose-svg text {
-      font-size: 9px;
-      fill: #666;
+      font-size: 13px;
+      font-weight: 600;
+      fill: rgba(0, 0, 0, 0.78);
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
     }
     .heatmap-wrap {
       width: 100%;
@@ -363,7 +365,13 @@
       vertical-align: top;
     }
     .wind-rose-card--compact .v-card__subtitle {
-      line-height: 1.25;
+      line-height: 1.4;
+      padding-top: 4px !important;
+      padding-bottom: 12px !important;
+      white-space: normal;
+    }
+    .wind-rose-card--compact .wind-rose-body {
+      padding-top: 10px !important;
     }
   </style>
 </head>
@@ -1035,15 +1043,15 @@
                               @click="resetWindPaired('apparent')"
                             >Clear</v-btn>
                           </v-card-title>
-                          <v-card-subtitle class="text-caption pb-0 pt-0 px-3 grey--text">
+                          <v-card-subtitle class="text-caption px-3 grey--text">
                             Bow‑relative apparent wind (MWV <strong>R</strong>).
                           </v-card-subtitle>
-                          <v-card-text class="py-2">
+                          <v-card-text class="py-2 wind-rose-body">
                             <div class="text-center">
                               <svg class="wind-rose-svg" viewBox="0 0 200 200" width="140" height="140">
-                                <circle cx="100" cy="100" r="88" fill="none" stroke="rgba(128,128,128,0.35)" />
+                                <circle cx="100" cy="100" r="88" fill="none" stroke="rgba(70,70,70,0.55)" stroke-width="1.25" />
                                 <g v-for="(sec, i) in windRoseChartApparent.sectors" :key="'rose-a-' + i">
-                                  <path :d="sec.d" :fill="sec.fill" stroke="rgba(0,0,0,0.1)" stroke-width="0.4" />
+                                  <path :d="sec.d" :fill="sec.fill" stroke="rgba(0,0,0,0.18)" stroke-width="0.65" />
                                 </g>
                                 <text x="100" y="16" text-anchor="middle">N</text>
                                 <text x="186" y="104" text-anchor="middle">E</text>
@@ -1067,15 +1075,15 @@
                               @click="resetWindPaired('true')"
                             >Clear</v-btn>
                           </v-card-title>
-                          <v-card-subtitle class="text-caption pb-0 pt-0 px-3 grey--text">
+                          <v-card-subtitle class="text-caption px-3 grey--text">
                             North‑referenced (MWV <strong>T</strong> / MWD): wind <em>from</em> direction over the last <strong>{{ windHistoryWindowMinutes }} min</strong>; N/E/S/W geographic.
                           </v-card-subtitle>
-                          <v-card-text class="py-2">
+                          <v-card-text class="py-2 wind-rose-body">
                             <div class="text-center">
                               <svg class="wind-rose-svg" viewBox="0 0 200 200" width="140" height="140">
-                                <circle cx="100" cy="100" r="88" fill="none" stroke="rgba(128,128,128,0.35)" />
+                                <circle cx="100" cy="100" r="88" fill="none" stroke="rgba(70,70,70,0.55)" stroke-width="1.25" />
                                 <g v-for="(sec, i) in windRoseChartTrue.sectors" :key="'rose-t-' + i">
-                                  <path :d="sec.d" :fill="sec.fill" stroke="rgba(0,0,0,0.1)" stroke-width="0.4" />
+                                  <path :d="sec.d" :fill="sec.fill" stroke="rgba(0,0,0,0.18)" stroke-width="0.65" />
                                 </g>
                                 <text x="100" y="16" text-anchor="middle">N</text>
                                 <text x="186" y="104" text-anchor="middle">E</text>
@@ -2144,8 +2152,8 @@
             const y0 = cy - r * Math.cos(d0);
             const x1 = cx + r * Math.sin(d1);
             const y1 = cy - r * Math.cos(d1);
-            const L = Math.round(36 + 38 * t);
-            const fill = 'hsl(' + hue + ', 70%, ' + L + '%)';
+            const L = Math.round(24 + 46 * t);
+            const fill = 'hsl(' + hue + ', 78%, ' + L + '%)';
             sectors.push({
               d: 'M ' + cx + ' ' + cy + ' L ' + x0.toFixed(2) + ' ' + y0.toFixed(2) + ' A ' + r.toFixed(2) + ' ' + r.toFixed(2) + ' 0 0 1 ' + x1.toFixed(2) + ' ' + y1.toFixed(2) + ' Z',
               sum: sums[i],
