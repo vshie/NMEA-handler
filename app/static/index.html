@@ -2248,12 +2248,20 @@
           const timeBins = 48;
           const bucketT = TIME_SEC / timeBins;
           const speedBinKts = 2;
+          const defaultMaxSpeedKts = 10;
+          const defaultSpeedBins = Math.ceil(defaultMaxSpeedKts / speedBinKts);
           let maxS = 0;
           for (let i = 0; i < samples.length; i++) {
             const sp = Number(samples[i].speed);
             if (isFinite(sp)) maxS = Math.max(maxS, sp);
           }
-          const numSpeedBins = Math.min(24, Math.max(6, Math.ceil(maxS / speedBinKts) + 1));
+          let numSpeedBins;
+          if (maxS <= defaultMaxSpeedKts) {
+            numSpeedBins = defaultSpeedBins;
+          } else {
+            numSpeedBins = Math.ceil(maxS / speedBinKts) + 1;
+          }
+          numSpeedBins = Math.min(24, Math.max(defaultSpeedBins, numSpeedBins));
           const grid = [];
           for (let r = 0; r < numSpeedBins; r++) {
             grid.push(Array(timeBins).fill(0));
