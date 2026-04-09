@@ -282,15 +282,15 @@
       opacity: 0.8;
     }
     
-    .sentence-interval-input {
-      width: 4em;
+    .sentence-rate-input {
+      width: 4.25em;
       padding: 2px 6px;
       font-size: 0.875rem;
       border: 1px solid rgba(0,0,0,.12);
       border-radius: 4px;
       text-align: right;
     }
-    .sentence-interval-input:disabled {
+    .sentence-rate-input:disabled {
       background: #f5f5f5;
       cursor: not-allowed;
     }
@@ -1580,7 +1580,7 @@
                     Connect to a 300WX WeatherStation to configure sentence output.
                   </v-alert>
                   <div class="text-caption grey--text mb-2">
-                    Switches set which sentences the device outputs (and at what interval). Settings are saved and restored when the extension restarts; they are not based on which messages are currently being received.
+                    Switches set which sentences the device outputs (and at what rate in Hz). Settings are saved and restored when the extension restarts; they are not based on which messages are currently being received.
                   </div>
                   <v-alert v-if="sentenceConfigMessage" :type="sentenceConfigSuccess ? 'success' : 'error'" dense dismissible class="mb-4" @input="sentenceConfigMessage = ''">
                     {{ sentenceConfigMessage }}
@@ -1651,7 +1651,7 @@
                           <th class="text-left">Name</th>
                           <th class="text-left">Description</th>
                           <th class="text-center">Enabled</th>
-                          <th class="text-center">Interval</th>
+                          <th class="text-center">Rate (Hz)</th>
                           <th class="text-center">Required</th>
                         </tr>
                       </thead>
@@ -1674,15 +1674,15 @@
                             <div class="d-flex align-center justify-center">
                               <input
                                 type="number"
-                                min="0.1"
-                                max="5"
-                                step="0.1"
-                                :value="getSentenceInterval(sentence)"
-                                @change="setSentenceInterval(sentence.id, $event.target.value)"
+                                min="0.2"
+                                max="10"
+                                step="0.05"
+                                :value="getSentenceRateHz(sentence)"
+                                @change="setSentenceRateHz(sentence.id, $event.target.value)"
                                 :disabled="!connectionInfo.connected"
-                                class="sentence-interval-input"
+                                class="sentence-rate-input"
                               >
-                              <span class="text-caption ml-1">s</span>
+                              <span class="text-caption ml-1">Hz</span>
                             </div>
                           </td>
                           <td class="text-center">
@@ -3224,6 +3224,13 @@
         getSentenceInterval(sentence) {
           return this.sentenceIntervals[sentence.id] ?? (sentence.default_interval / 10);
         },
+        /** Output rate in Hz for display/edit (device interval is stored in seconds internally). */
+        getSentenceRateHz(sentence) {
+          const sec = this.getSentenceInterval(sentence);
+          if (!isFinite(sec) || sec <= 0) return '';
+          const hz = 1 / sec;
+          return Math.round(hz * 1000) / 1000;
+        },
         getSentenceIntervalForId(sentenceId) {
           const s = this.sentences.find(s => s.id === sentenceId);
           return s ? (this.sentenceIntervals[sentenceId] ?? s.default_interval / 10) : 1;
@@ -3296,10 +3303,12 @@
         async applySentenceConfig(sentenceId, enabled, intervalSeconds) {
           this.queueSentenceChange(sentenceId, enabled, intervalSeconds);
         },
-        async setSentenceInterval(sentenceId, value) {
-          const num = parseFloat(value);
-          if (isNaN(num)) return;
-          const sec = Math.max(0.1, Math.min(5, num));
+        async setSentenceRateHz(sentenceId, value) {
+          const hz = parseFloat(value);
+          if (!isFinite(hz) || hz <= 0) return;
+          let sec = 1 / hz;
+          sec = Math.max(0.1, Math.min(5, sec));
+          sec = Math.round(sec * 10) / 10;
           this.$set(this.sentenceIntervals, sentenceId, sec);
           await this.applySentenceConfig(sentenceId, this.sentenceConfig[sentenceId], sec);
         },
