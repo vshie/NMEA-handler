@@ -2070,8 +2070,8 @@ def register_service():
         "icon": "mdi-weather-windy",
         "company": "Blue Robotics",
         "version": "0.1.0",
-        "webpage": "https://github.com/vshie/NMEA-handler",
-        "api": "https://github.com/vshie/NMEA-handler"
+        "webpage": "https://github.com/vshie/Airmar-WX",
+        "api": "https://github.com/vshie/Airmar-WX"
     })
 
 @app.route('/docs')

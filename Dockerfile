@@ -81,7 +81,7 @@ LABEL permissions='\
     "CpuPeriod": 100000,\
     "CpuQuota": 100000,\
     "Binds": [\
-      "/usr/blueos/extensions/nmea-handler:/app/logs",\
+      "/usr/blueos/extensions/airmar-wx:/app/logs",\
       "/dev:/dev"\
     ],\
     "ExtraHosts": ["host.docker.internal:host-gateway"],\
@@ -113,7 +113,7 @@ ARG OWNER
 LABEL org.blueos.readme=''
 LABEL org.blueos.links='\
 {\
-    "source": "https://github.com/vshie/NMEA-handler"\
+    "source": "https://github.com/vshie/Airmar-WX"\
 }'
 
 # Run the application

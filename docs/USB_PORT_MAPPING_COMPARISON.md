@@ -1,8 +1,8 @@
-# USB port mapping: NMEA-handler vs BlueOS PR 3403
+# USB port mapping: Airmar-WX vs BlueOS PR 3403
 
 ## Summary
 
-| Aspect | NMEA-handler (ours) | BlueOS PR 3403 |
+| Aspect | Airmar-WX (ours) | BlueOS PR 3403 |
 |--------|---------------------|----------------|
 | **Input** | `/dev/serial/by-path` symlink **name** (e.g. `platform-...-usb-0:1.1.3:1.0-port0`) | Full **path** string (e.g. `/dev/serial/by-path/...`) |
 | **Matching** | Regex extract `bus_path` (e.g. `0:1.1.3`), then **segment checks** (`:1.1.3`, `:1.2`, etc.) | **Prefix match**: strip `-port0` suffix, then `usbRoot.includes(key)` over a static map |

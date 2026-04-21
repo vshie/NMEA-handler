@@ -30,8 +30,8 @@ A BlueOS extension for the Airmar 300WX WeatherStation. Connects via NMEA 0183 s
 2. Enter:
    - **Extension Identifier**: `bluerobotics.airmar-300wx`
    - **Extension Name**: `Airmar 300WX`
-   - **Docker image**: `vshie/blueos-nmea-handler`
-   - **Docker tag**: `200WX`
+   - **Docker image**: `vshie/airmar-wx`
+   - **Docker tag**: `latest`
 
 ## Custom Settings (Permissions)
 
@@ -47,7 +47,7 @@ When manually installing, paste this into the **Custom settings** field:
     "CpuPeriod": 100000,
     "CpuQuota": 100000,
     "Binds": [
-      "/usr/blueos/extensions/nmea-handler:/app/logs",
+      "/usr/blueos/extensions/airmar-wx:/app/logs",
       "/dev:/dev"
     ],
     "ExtraHosts": ["host.docker.internal:host-gateway"],
@@ -102,7 +102,7 @@ Once connected, all variables appear in Cockpit's data-lake and can be assigned 
 
 Log files are stored in the BlueOS extensions directory:
 
-- Location: `/usr/blueos/extensions/nmea-handler/`
+- Location: `/usr/blueos/extensions/airmar-wx/`
 - Files:
   - `nmea_messages.log` — Raw NMEA message history
   - `300wx.log` — Application operational log
@@ -124,9 +124,9 @@ These logs persist across container restarts and can be managed from the Logs ta
 ### Building from Source
 
 ```bash
-git clone https://github.com/vshie/NMEA-handler.git
-cd NMEA-handler
-docker build -t vshie/nmea-handler:latest .
+git clone https://github.com/vshie/Airmar-WX.git
+cd Airmar-WX
+docker build -t vshie/airmar-wx:latest .
 ```
 
 ### Local Testing
@@ -146,7 +146,7 @@ The CI/CD pipeline requires these GitHub Secrets and Variables:
 - `DOCKER_PASSWORD` — Docker Hub access token (Read & Write)
 
 **Variables:**
-- `IMAGE_NAME` — Docker repository name (default: `nmea-handler`)
+- `IMAGE_NAME` — Docker repository name (default: `airmar-wx`)
 - `MY_NAME` — Author name
 - `MY_EMAIL` — Author email
 - `ORG_NAME` — Maintainer organization name
