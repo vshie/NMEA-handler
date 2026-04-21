@@ -544,6 +544,52 @@
                             (device already configured)
                           </span>
                         </div>
+                        <div
+                          v-if="connectionInfo.device_info && connectionInfo.device_info.model_code"
+                          class="text-caption mt-1"
+                        >
+                          Device: <strong>{{ connectionInfo.device_info.model_code }}</strong>
+                          <span v-if="connectionInfo.device_info.firmware_version">
+                            &mdash; fw {{ connectionInfo.device_info.firmware_version }}
+                          </span>
+                          <span v-if="connectionInfo.device_info.serial_number">
+                            &mdash; s/n {{ connectionInfo.device_info.serial_number }}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </v-alert>
+
+                  <!-- Legacy WX model compatibility notice (e.g. 200WX).
+                       Extension targets the 300WX; older WX units cannot run at
+                       115200 baud (max 38400), so the auto-switch will fail and
+                       the "Stay at 4800 baud only" option is required. -->
+                  <v-alert
+                    v-if="connectionInfo.connected && connectionInfo.device_info && connectionInfo.device_info.is_legacy"
+                    type="warning"
+                    dense
+                    class="connection-status mt-2"
+                  >
+                    <div class="d-flex align-start">
+                      <v-icon class="mr-2">mdi-alert</v-icon>
+                      <div>
+                        <strong>
+                          {{ connectionInfo.device_info.family || connectionInfo.device_info.model_code }}
+                          detected &mdash; compatibility notice
+                        </strong>
+                        <div class="text-caption mt-1">
+                          This extension is primarily developed against the Airmar 300WX.
+                          The <strong>{{ connectionInfo.device_info.model_code }}</strong>
+                          shares most of the <code>$PAMTC</code> command set and should work, but it
+                          does <em>not</em> support 115200 baud (the 300WX operating rate). The auto
+                          baud switch will fail on this unit.
+                        </div>
+                        <div class="text-caption mt-1">
+                          For stable operation, enable
+                          <strong>&ldquo;Stay at 4800 baud only&rdquo;</strong>
+                          below and reconnect. Some sensors/sentences available on the 300WX
+                          (e.g. GNSS on certain 200WX variants) may also be absent.
+                        </div>
                       </div>
                     </div>
                   </v-alert>
@@ -1927,7 +1973,8 @@
           required_sentences: [],
           stay_at_4800: false,
           saved_port: null,
-          saved_baud_rate: 4800
+          saved_baud_rate: 4800,
+          device_info: null
         },
         connectionPollInterval: null,
         stayAt4800Baud: false,  // When true, connect at 4800 and never switch to 115200 (avoids mixed-baud issues)

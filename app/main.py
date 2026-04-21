@@ -156,6 +156,14 @@ class NMEAHandler:
         self.connection_step_since = None  # epoch when current status phase began
         self.detected_baud = None
         self._cancel_connect = False  # flag checked by connect loops
+
+        # Device identification (populated from $PAMTC,QPS / $PAMTC,QV after connect).
+        # model_code is up to 10 ASCII chars per the WX manual; examples include
+        # "300WX", "300WXIP", "300WXH", "200WX", "200WX-IPX7", "150WX", "100WX".
+        # This extension was originally built for the 200WX; the 300WX baud switch
+        # to 115200 is not supported on the 200WX (max 38400), so we surface a UI
+        # notice when an older WX model is detected.
+        self.device_info = None
         
         self.state = {
             'port': None,
@@ -1465,6 +1473,113 @@ class NMEAHandler:
             self.app_logger.error(f"Error batch configuring sentences: {e}")
             return False, str(e)
 
+    def _classify_wx_model(self, model_code):
+        """
+        Classify a WX model code reported via $PAMTR,QPS into a family label.
+        Returns dict with keys: family ('300WX'|'200WX'|'150WX'|'100WX'|'unknown'),
+        is_legacy (True for models that predate the 300WX and cannot run at 115200).
+        """
+        code = (model_code or '').upper().strip()
+        if code.startswith('300WX'):
+            return {'family': '300WX', 'is_legacy': False}
+        if code.startswith('200WX'):
+            return {'family': '200WX', 'is_legacy': True}
+        if code.startswith('150WX'):
+            return {'family': '150WX', 'is_legacy': True}
+        if code.startswith('100WX'):
+            return {'family': '100WX', 'is_legacy': True}
+        return {'family': 'unknown', 'is_legacy': False}
+
+    def query_device_info(self, timeout=2.0):
+        """
+        Identify the connected device by sending $PAMTC,QPS (part/serial/model)
+        and $PAMTC,QV (hardware/firmware versions) and parsing the responses.
+
+        Also accepts $PAMTT,QPS/$PAMTT,QV lines which the device emits once on
+        power-up per the WX manual. Updates self.device_info and returns it,
+        or None on failure. Must be called while the reader thread is not yet
+        running so responses are not consumed elsewhere.
+        """
+        try:
+            if not self.serial_connection or not self.serial_connection.is_open:
+                return None
+
+            info = {
+                'model_code': None,
+                'part_number': None,
+                'serial_number': None,
+                'hardware_version': None,
+                'firmware_version': None,
+                'family': 'unknown',
+                'is_legacy': False,
+            }
+
+            with self._serial_lock:
+                try:
+                    self.serial_connection.reset_input_buffer()
+                except Exception:
+                    pass
+                self.serial_connection.write(self._nmea_cmd('PAMTC,QPS'))
+                time.sleep(0.1)
+                self.serial_connection.write(self._nmea_cmd('PAMTC,QV'))
+
+                deadline = time.time() + timeout
+                prev_timeout = self.serial_connection.timeout
+                self.serial_connection.timeout = 0.2
+                try:
+                    while time.time() < deadline:
+                        try:
+                            line = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
+                        except Exception as read_err:
+                            if 'returned no data' in str(read_err) or 'multiple access' in str(read_err):
+                                time.sleep(0.05)
+                                continue
+                            break
+                        if not line:
+                            continue
+                        if not (line.startswith('$PAMTR,') or line.startswith('$PAMTT,')):
+                            continue
+                        if not self._incoming_line_checksum_valid(line):
+                            continue
+                        body = line.split('*', 1)[0]
+                        parts = body.split(',')
+                        if len(parts) < 2:
+                            continue
+                        tag = parts[1]
+                        if tag == 'QPS' and len(parts) >= 5:
+                            info['part_number'] = parts[2] or None
+                            info['serial_number'] = parts[3] or None
+                            info['model_code'] = parts[4] or None
+                        elif tag == 'QV' and len(parts) >= 7:
+                            info['hardware_version'] = parts[3] or None
+                            info['firmware_version'] = parts[6] or None
+                        if info['model_code'] and info['firmware_version']:
+                            break
+                finally:
+                    try:
+                        self.serial_connection.timeout = prev_timeout
+                    except Exception:
+                        pass
+
+            if not info['model_code']:
+                self.app_logger.debug('Device identification: no $PAMTR,QPS response received')
+                self.device_info = None
+                return None
+
+            classified = self._classify_wx_model(info['model_code'])
+            info.update(classified)
+            self.device_info = info
+            self.app_logger.info(
+                f"Device identified: model={info['model_code']} "
+                f"(family {info['family']}, legacy={info['is_legacy']}) "
+                f"hw={info['hardware_version']} fw={info['firmware_version']} "
+                f"serial={info['serial_number']}"
+            )
+            return info
+        except Exception as e:
+            self.app_logger.warning(f"Device identification failed: {e}")
+            return None
+
     def query_sentence_config(self):
         """
         Query the device for current sentence configuration.
@@ -1687,6 +1802,14 @@ class NMEAHandler:
                             self.app_logger.warning(f"Could not switch device to 4800: {msg}")
                         # Continue; reader will be started in common path below
                     
+                    # Identify the device (model / firmware) before starting the
+                    # reader thread so $PAMTR,QPS/QV responses are not consumed
+                    # by the async reader. Failure is non-fatal.
+                    try:
+                        self.query_device_info()
+                    except Exception as _qe:
+                        self.app_logger.debug(f"query_device_info error: {_qe}")
+
                     # Enable required sentences (4800 or operating baud)
                     success, msg = self.enable_required_sentences()
                     if not success:
@@ -1763,6 +1886,7 @@ class NMEAHandler:
             self.connected_since = None
             self.messages_received = 0
             self.detected_baud = None
+            self.device_info = None
             self._set_conn_status(self.CONN_STATUS_DISCONNECTED, '')
             self.save_state()
             self._sse_broadcast('connection', self.get_connection_info())
@@ -1793,6 +1917,7 @@ class NMEAHandler:
             'stay_at_4800': bool(self.state.get('stay_at_4800', False)),
             'saved_port': self.state.get('port'),
             'saved_baud_rate': self.state.get('baud_rate', 4800),
+            'device_info': self.device_info if is_connected else None,
         }
 
     def read_serial(self):
