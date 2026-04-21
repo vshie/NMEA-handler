@@ -30,8 +30,8 @@ A BlueOS extension for the Airmar 300WX WeatherStation. Connects via NMEA 0183 s
 2. Enter:
    - **Extension Identifier**: `bluerobotics.airmar-300wx`
    - **Extension Name**: `Airmar 300WX`
-   - **Docker image**: `vshie/airmar-wx`
-   - **Docker tag**: `latest`
+   - **Docker image**: `vshie/blueos-airmar-wx`
+   - **Docker tag**: `main`
 
 ## Custom Settings (Permissions)
 
@@ -126,7 +126,7 @@ These logs persist across container restarts and can be managed from the Logs ta
 ```bash
 git clone https://github.com/vshie/Airmar-WX.git
 cd Airmar-WX
-docker build -t vshie/airmar-wx:latest .
+docker build -t vshie/blueos-airmar-wx:latest .
 ```
 
 ### Local Testing
