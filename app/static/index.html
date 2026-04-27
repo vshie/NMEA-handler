@@ -2658,8 +2658,13 @@
         },
         async downloadAppLogs() {
           try {
-            // Download the application log file
-            window.location.href = '/api/logs/app';
+            const link = document.createElement('a');
+            link.href = '/api/logs/app';
+            link.setAttribute('download', '300wx.log');
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
           } catch (error) {
             console.error('Error downloading app logs:', error);
             alert('Error downloading application logs.');
@@ -3268,27 +3273,33 @@
           }
         },
         async downloadLogs() {
+          // Stream the download natively via an anchor click instead of buffering
+          // the whole file in memory through axios + Blob. The NMEA log can be
+          // hundreds of MB, which crashes / hangs the iframe-embedded GUI.
           try {
-            const response = await axios.get('/api/logs', { responseType: 'blob' });
-            const url = window.URL.createObjectURL(new Blob([response.data]));
+            // Quick existence/size check so we can show the "no log file" message
+            // and avoid kicking off a download for an empty file.
+            const info = await axios.get('/api/logs/info');
+            const nmea = (info.data.logs || []).find(l => l.name === 'nmea_messages.log');
+            if (!nmea || !nmea.size_bytes) {
+              alert('No log file found. Connect to a device and receive messages to create logs.');
+              return;
+            }
+          } catch (error) {
+            console.warn('Could not pre-check log info, attempting download anyway:', error);
+          }
+
+          try {
             const link = document.createElement('a');
-            link.href = url;
+            link.href = '/api/logs';
             link.setAttribute('download', 'nmea_messages.log');
+            link.style.display = 'none';
             document.body.appendChild(link);
             link.click();
             link.remove();
           } catch (error) {
-            if (error.response && error.response.status === 404) {
-              const reader = new FileReader();
-              reader.onload = () => {
-                const errorData = JSON.parse(reader.result);
-                alert(errorData.message);
-              };
-              reader.readAsText(error.response.data);
-            } else {
-              alert('Error downloading logs. Please try again.');
-            }
             console.error('Error downloading logs:', error);
+            alert('Error downloading logs. Please try again.');
           }
         },
         async deleteLogs() {
