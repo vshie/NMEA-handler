@@ -62,10 +62,10 @@ EXPOSE 8765
 
 # BlueOS extension metadata
 LABEL org.blueos.type="tool"
-LABEL org.blueos.version="0.1"
+LABEL org.blueos.version="0.1.0"
 LABEL org.blueos.requirements="core >= 1.1"
-LABEL org.blueos.name="Airmar 300WX"
-LABEL org.blueos.description="Airmar 300WX WeatherStation interface for BlueOS"
+LABEL org.blueos.name="Airmar WX"
+LABEL org.blueos.description="Interface for Airmar WX-series WeatherStations (300WX, 200WX) over NMEA 0183 — live dashboard, ArduPilot UDP, and Cockpit WebSocket output."
 LABEL org.blueos.icon="mdi-weather-windy"
 LABEL org.blueos.category="Sensors"
 LABEL org.blueos.order="10"
