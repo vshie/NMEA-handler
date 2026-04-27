@@ -90,8 +90,22 @@ LABEL permissions='\
   }\
 }'
 
+# The BlueOS Extensions Repository processor reads UNPREFIXED labels
+# (authors, company, type, readme, links, requirements). Keeping the
+# org.blueos.* duplicates above for backward compatibility with anything
+# that may still expect them.
+LABEL version="1.0.0"
+LABEL type="tool"
+LABEL requirements="core >= 1.1"
+
 ARG AUTHOR
 ARG AUTHOR_EMAIL
+LABEL authors='[\
+    {\
+        "name": "Tony White",\
+        "email": "tony@bluerobotics.com"\
+    }\
+]'
 LABEL org.blueos.authors='[\
     {\
         "name": "Tony White",\
@@ -101,19 +115,28 @@ LABEL org.blueos.authors='[\
 
 ARG MAINTAINER
 ARG MAINTAINER_EMAIL
-LABEL org.blueos.company='\
-{\
-    "about": "Airmar 300WX WeatherStation for BlueOS",\
+LABEL company='{\
+    "about": "Airmar WX-series WeatherStation interface for BlueOS",\
+    "name": "Blue Robotics",\
+    "email": "support@bluerobotics.com"\
+}'
+LABEL org.blueos.company='{\
+    "about": "Airmar WX-series WeatherStation interface for BlueOS",\
     "name": "Blue Robotics",\
     "email": "support@bluerobotics.com"\
 }'
 
 ARG REPO
 ARG OWNER
-LABEL org.blueos.readme=''
-LABEL org.blueos.links='\
-{\
-    "source": "https://github.com/vshie/Airmar-WX"\
+LABEL readme='https://raw.githubusercontent.com/vshie/Airmar-WX/{tag}/README.md'
+LABEL links='{\
+    "source": "https://github.com/vshie/Airmar-WX",\
+    "website": "https://bluerobotics.com"\
+}'
+LABEL org.blueos.readme='https://raw.githubusercontent.com/vshie/Airmar-WX/{tag}/README.md'
+LABEL org.blueos.links='{\
+    "source": "https://github.com/vshie/Airmar-WX",\
+    "website": "https://bluerobotics.com"\
 }'
 
 # Run the application
